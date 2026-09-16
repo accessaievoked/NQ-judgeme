@@ -1,0 +1,248 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Note that some adapters may set a maximum length for the String type by default, please ensure your strings are long
+// enough when changing adapters.
+// See https://www.prisma.io/docs/orm/reference/prisma-schema-reference#string for more information
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Session {
+  id                  String    @id
+  shop                String
+  state               String
+  isOnline            Boolean   @default(false)
+  scope               String?
+  expires             DateTime?
+  accessToken         String
+  userId              BigInt?
+  firstName           String?
+  lastName            String?
+  email               String?
+  accountOwner        Boolean   @default(false)
+  locale              String?
+  collaborator        Boolean?  @default(false)
+  emailVerified       Boolean?  @default(false)
+  refreshToken        String?
+  refreshTokenExpires DateTime?
+}
+
+// ---------------------------------------------------------------------------
+// Tenant + Shopify data mirror
+// ---------------------------------------------------------------------------
+
+enum SyncStatus {
+  PENDING
+  RUNNING
+  COMPLETE
+  FAILED
+}
+
+model Shop {
+  id                String     @id @default(cuid())
+  domain            String     @unique
+  email             String?
+  planName          String?
+  currencyCode      String?
+  ianaTimezone      String?
+  installedAt       DateTime   @default(now())
+  uninstalledAt     DateTime?
+  catalogSyncStatus SyncStatus @default(PENDING)
+  catalogSyncedAt   DateTime?
+  orderSyncStatus   SyncStatus @default(PENDING)
+  orderSyncedAt     DateTime?
+  syncError         String?
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  products       Product[]
+  variants       Variant[]
+  customers      Customer[]
+  orders         Order[]
+  orderLineItems OrderLineItem[]
+  reviewRequests ReviewRequest[]
+}
+
+model Product {
+  id          String   @id @default(cuid())
+  shopId      String
+  shop        Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  shopifyId   String
+  title       String
+  handle      String?
+  status      String?
+  vendor      String?
+  productType String?
+  imageUrl    String?
+  syncedAt    DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  variants       Variant[]
+  lineItems      OrderLineItem[]
+  reviewRequests ReviewRequest[]
+
+  @@unique([shopId, shopifyId])
+  @@index([shopId])
+}
+
+model Variant {
+  id        String   @id @default(cuid())
+  shopId    String
+  shop      Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  shopifyId String
+  title     String?
+  sku       String?
+  price     Decimal? @db.Decimal(10, 2)
+  syncedAt  DateTime @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lineItems OrderLineItem[]
+
+  @@unique([shopId, shopifyId])
+  @@index([shopId])
+  @@index([productId])
+}
+
+model Customer {
+  id        String   @id @default(cuid())
+  shopId    String
+  shop      Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  shopifyId String
+  email     String?
+  firstName String?
+  lastName  String?
+  syncedAt  DateTime @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  orders         Order[]
+  reviewRequests ReviewRequest[]
+
+  @@unique([shopId, shopifyId])
+  @@index([shopId])
+  @@index([shopId, email])
+}
+
+model Order {
+  id                String    @id @default(cuid())
+  shopId            String
+  shop              Shop      @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  shopifyId         String
+  name              String?
+  customerId        String?
+  customer          Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  email             String?
+  currencyCode      String?
+  totalPrice        Decimal?  @db.Decimal(10, 2)
+  financialStatus   String?
+  fulfillmentStatus String?
+  processedAt       DateTime?
+  cancelledAt       DateTime?
+  syncedAt          DateTime  @default(now())
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  lineItems      OrderLineItem[]
+  reviewRequests ReviewRequest[]
+
+  @@unique([shopId, shopifyId])
+  @@index([shopId])
+  @@index([shopId, processedAt])
+}
+
+model OrderLineItem {
+  id        String   @id @default(cuid())
+  shopId    String
+  shop      Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  orderId   String
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  shopifyId String?
+  productId String?
+  product   Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  variantId String?
+  variant   Variant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  title     String
+  quantity  Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([orderId, shopifyId])
+  @@index([shopId])
+  @@index([productId])
+}
+
+// ---------------------------------------------------------------------------
+// Review requests (proof-of-purchase tokens)
+// ---------------------------------------------------------------------------
+
+enum ReviewRequestStatus {
+  PENDING
+  SENT
+  REMINDED_1
+  REMINDED_2
+  COMPLETED
+  CANCELLED
+}
+
+model ReviewRequest {
+  id               String              @id @default(cuid())
+  shopId           String
+  shop             Shop                @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  orderId          String
+  order            Order               @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  customerId       String?
+  customer         Customer?           @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  productId        String?
+  product          Product?            @relation(fields: [productId], references: [id], onDelete: SetNull)
+  token            String              @unique
+  channel          String              @default("email")
+  status           ReviewRequestStatus @default(PENDING)
+  scheduledAt      DateTime?
+  sentAt           DateTime?
+  firstReminderAt  DateTime?
+  secondReminderAt DateTime?
+  completedAt      DateTime?
+  cancelledAt      DateTime?
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  @@unique([orderId, productId, channel])
+  @@index([shopId])
+  @@index([token])
+}
+
+// ---------------------------------------------------------------------------
+// Webhook idempotency ledger
+// ---------------------------------------------------------------------------
+
+enum WebhookEventStatus {
+  RECEIVED
+  PROCESSING
+  PROCESSED
+  FAILED
+}
+
+model WebhookEvent {
+  id          String             @id @default(cuid())
+  shopDomain  String
+  topic       String
+  webhookId   String             @unique
+  payload     Json?
+  status      WebhookEventStatus @default(RECEIVED)
+  error       String?
+  receivedAt  DateTime           @default(now())
+  processedAt DateTime?
+
+  @@index([shopDomain])
+  @@index([shopDomain, topic])
+}
