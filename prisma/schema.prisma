@@ -70,6 +70,16 @@ model Shop {
   reviewRequests ReviewRequest[]
   reviews        Review[]
   scheduleRules  ScheduleRule[]
+  emailTemplates EmailTemplate[]
+}
+
+// Single global row. The web process gets the live tunnel URL injected by
+// `shopify app dev`; the worker process doesn't, so the web process writes
+// it here on boot and the worker reads it from here instead of a static
+// env var that goes stale every tunnel restart.
+model AppConfig {
+  key   String @id
+  value String
 }
 
 // Per-shop preferences that aren't trigger scheduling (that's ScheduleRule).
@@ -79,6 +89,23 @@ model ShopSettings {
   shop      Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// Editable wording per trigger type. subject/bodyHtml support {{tokens}}
+// (customerName, productTitle, shopName, reviewUrl) filled in at send time.
+// No row = use the hardcoded default in templates.server.ts.
+model EmailTemplate {
+  id          String   @id @default(cuid())
+  shopId      String
+  shop        Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  triggerType String
+  subject     String
+  bodyHtml    String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([shopId, triggerType])
+  @@index([shopId])
 }
 
 // One row per Shopify event type ("orders/paid", "orders/fulfilled", and any

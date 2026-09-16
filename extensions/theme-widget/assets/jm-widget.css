@@ -1,0 +1,10 @@
+.jm-reviews { font-family: inherit; max-width: 640px; }
+.jm-reviews__summary { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
+.jm-reviews__stars { color: #f5a623; letter-spacing: 1px; }
+.jm-reviews__count { color: #666; font-size: 14px; }
+.jm-reviews__item { border-top: 1px solid #eee; padding: 12px 0; }
+.jm-reviews__item-stars { color: #f5a623; font-size: 14px; }
+.jm-reviews__item-title { font-weight: 600; margin: 4px 0; }
+.jm-reviews__item-body { margin: 4px 0; color: #333; }
+.jm-reviews__item-author { color: #888; font-size: 12px; }
+.jm-reviews__empty { color: #666; }

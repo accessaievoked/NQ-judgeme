@@ -1,0 +1,19 @@
+{% comment %}
+  App block a merchant adds to their product template via Theme Editor.
+  Renders a container the widget.js script fills in client-side by calling
+  the app proxy (/apps/reviews) — no server-side Liquid->app call needed.
+{% endcomment %}
+<div class="jm-reviews" data-jm-reviews data-product-id="{{ product.id }}">
+  <p class="jm-reviews__loading">Loading reviews…</p>
+</div>
+
+{{ 'jm-widget.css' | asset_url | stylesheet_tag }}
+<script src="{{ 'jm-widget.js' | asset_url }}" defer></script>
+
+{% schema %}
+{
+  "name": "Product reviews",
+  "target": "section",
+  "settings": []
+}
+{% endschema %}

@@ -51,6 +51,11 @@ uri = "/webhooks/orders/paid"
 topics = ["orders/fulfilled"]
 uri = "/webhooks/orders/fulfilled"
 
+[app_proxy]
+url = "https://example.com/apps/reviews"
+subpath = "reviews"
+prefix = "apps"
+
 [auth]
 redirect_urls = [ "https://example.com/api/auth" ]
 

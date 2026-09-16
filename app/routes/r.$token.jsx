@@ -1,4 +1,5 @@
 // app/routes/r.$token.jsx — public hosted review form, no Shopify auth.
+import { useState } from "react";
 import { Form, useActionData, useLoaderData } from "react-router";
 import db from "../db.server";
 
@@ -75,9 +76,38 @@ const PAGE_STYLE = {
   color: "#1a1a1a",
 };
 
+function StarPicker({ rating, onChange }) {
+  const [hover, setHover] = useState(0);
+  const display = hover || rating;
+
+  return (
+    <div style={{ display: "flex", gap: 4 }} onMouseLeave={() => setHover(0)}>
+      {[1, 2, 3, 4, 5].map((value) => (
+        <span
+          key={value}
+          onClick={() => onChange(value)}
+          onMouseEnter={() => setHover(value)}
+          style={{ fontSize: 32, cursor: "pointer", color: value <= display ? "#f5a623" : "#ddd" }}
+        >
+          ★
+        </span>
+      ))}
+    </div>
+  );
+}
+
 export default function ReviewForm() {
   const data = useLoaderData();
   const actionData = useActionData();
+  const [rating, setRating] = useState(0);
+  const [clientError, setClientError] = useState("");
+
+  const handleSubmit = (event) => {
+    if (rating < 1) {
+      event.preventDefault();
+      setClientError("Please choose a star rating.");
+    }
+  };
 
   if (data.alreadySubmitted || actionData?.submitted) {
     return (
@@ -101,24 +131,11 @@ export default function ReviewForm() {
         />
       ) : null}
 
-      <Form method="POST">
+      <Form method="POST" onSubmit={handleSubmit}>
         <fieldset style={{ border: 0, padding: 0, marginBottom: 20 }}>
           <legend style={{ fontWeight: 600, marginBottom: 8 }}>Your rating</legend>
-          <div style={{ display: "flex", flexDirection: "row-reverse", justifyContent: "flex-end", gap: 4 }}>
-            {[5, 4, 3, 2, 1].map((value) => (
-              <label key={value} style={{ cursor: "pointer" }}>
-                <input
-                  type="radio"
-                  name="rating"
-                  value={value}
-                  required
-                  style={{ display: "none" }}
-                  className="star-input"
-                />
-                <span style={{ fontSize: 32, color: "#ddd" }} className="star">★</span>
-              </label>
-            ))}
-          </div>
+          <input type="hidden" name="rating" value={rating} />
+          <StarPicker rating={rating} onChange={setRating} />
         </fieldset>
 
         <label style={{ display: "block", marginBottom: 12 }}>
@@ -132,7 +149,7 @@ export default function ReviewForm() {
         </label>
 
         <label style={{ display: "block", marginBottom: 12 }}>
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>Your review</div>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>Your review (optional)</div>
           <textarea
             name="body"
             rows={4}
@@ -151,8 +168,8 @@ export default function ReviewForm() {
           />
         </label>
 
-        {actionData?.error ? (
-          <p style={{ color: "#c0392b", marginBottom: 12 }}>{actionData.error}</p>
+        {(clientError || actionData?.error) ? (
+          <p style={{ color: "#c0392b", marginBottom: 12 }}>{clientError || actionData.error}</p>
         ) : null}
 
         <button
@@ -170,16 +187,6 @@ export default function ReviewForm() {
           Submit review
         </button>
       </Form>
-
-      <style>{`
-        /* DOM order is 5,4,3,2,1 with row-reverse display (so 1..5 reads
-           left-to-right); highlight the checked star and everything after
-           it in DOM order, which is every lower value visually to its left. */
-        label:has(.star-input:checked) .star,
-        label:has(.star-input:checked) ~ label .star {
-          color: #f5a623;
-        }
-      `}</style>
     </div>
   );
 }

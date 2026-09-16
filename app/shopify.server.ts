@@ -7,6 +7,7 @@ import {
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
 import db from "./db.server";
 import { enqueueShopSync } from "./queue.server";
+import { setAppUrl } from "./appConfig.server";
 
 const shopify = shopifyApp({
   apiKey: process.env.SHOPIFY_API_KEY,
@@ -35,6 +36,14 @@ const shopify = shopifyApp({
     ? { customShopDomains: [process.env.SHOP_CUSTOM_DOMAIN] }
     : {}),
 });
+
+// This process gets the live tunnel URL from `shopify app dev`; the worker
+// process doesn't, so save it to the DB for the worker to read instead.
+if (process.env.SHOPIFY_APP_URL) {
+  setAppUrl(process.env.SHOPIFY_APP_URL).catch((err) => {
+    console.error("Failed to persist app URL:", err);
+  });
+}
 
 export default shopify;
 export const apiVersion = ApiVersion.July26;

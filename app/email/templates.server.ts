@@ -1,57 +1,67 @@
+import db from "../db.server";
+
+export interface TemplateTokens {
+  customerName?: string;
+  productTitle: string;
+  shopName: string;
+  reviewUrl: string;
+}
+
 const WRAPPER_STYLE =
   "font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;color:#1a1a1a;";
 const BUTTON_STYLE =
   "display:inline-block;background:#1a1a1a;color:#fff;text-decoration:none;padding:12px 24px;border-radius:6px;font-weight:600;margin-top:16px;";
 
-function wrap(body: string): string {
-  return `<div style="${WRAPPER_STYLE}">${body}</div>`;
-}
-
-/** Day 0: sent right after an order is placed. No review ask yet — just a thank-you. */
-export function day0IntroTemplate(input: { shopName: string; customerName?: string }) {
-  const greeting = input.customerName ? `Hi ${input.customerName},` : "Hi there,";
-  return {
-    subject: `Thanks for your order from ${input.shopName}!`,
-    html: wrap(`
-      <h2 style="margin-top:0;">${greeting}</h2>
-      <p>Thanks so much for shopping with <strong>${input.shopName}</strong> — your order is on its way.</p>
-      <p>Once it arrives, we'll follow up with a quick link to share what you think. No action needed from you right now.</p>
-      <p style="color:#666;font-size:13px;margin-top:32px;">— ${input.shopName}</p>
-    `),
-  };
-}
-
-/** The actual review ask, with the /r/:token link. Default for any trigger type. */
-export function reviewRequestTemplate(input: {
-  shopName: string;
-  productTitle: string;
-  reviewUrl: string;
-  customerName?: string;
-}) {
-  const greeting = input.customerName ? `Hi ${input.customerName},` : "Hi there,";
-  return {
-    subject: `How's your ${input.productTitle}?`,
-    html: wrap(`
-      <h2 style="margin-top:0;">${greeting}</h2>
-      <p>You recently bought <strong>${input.productTitle}</strong> from <strong>${input.shopName}</strong>.
+// Default wording per trigger, as plain {{token}} strings — same format a
+// vendor's custom EmailTemplate row uses, so both go through one fill path.
+export const DEFAULT_TEMPLATES: Record<string, { subject: string; bodyHtml: string }> = {
+  "orders/paid": {
+    subject: "How's your {{productTitle}}?",
+    bodyHtml: `<div style="${WRAPPER_STYLE}">
+      <p>Hi {{customerName}}, thanks for ordering {{productTitle}} from {{shopName}}.</p>
+      <p>We'd love to hear what you think once you've had a chance to try it out.</p>
+      <p><a href="{{reviewUrl}}">Leave a review</a></p>
+      <p style="color:#666;font-size:13px;">— {{shopName}}</p>
+    </div>`,
+  },
+  "orders/fulfilled": {
+    subject: "How's your {{productTitle}}?",
+    bodyHtml: `<div style="${WRAPPER_STYLE}">
+      <h2 style="margin-top:0;">Hi {{customerName}},</h2>
+      <p>You recently bought <strong>{{productTitle}}</strong> from <strong>{{shopName}}</strong>.
       Mind leaving a quick review? It takes less than a minute and really helps.</p>
       <p style="text-align:center;">
-        <a href="${input.reviewUrl}" style="${BUTTON_STYLE}">Leave a review</a>
+        <a href="{{reviewUrl}}" style="${BUTTON_STYLE}">Leave a review</a>
       </p>
-      <p style="color:#666;font-size:13px;margin-top:32px;">— ${input.shopName}</p>
-    `),
-  };
+      <p style="color:#666;font-size:13px;margin-top:32px;">— {{shopName}}</p>
+    </div>`,
+  },
+};
+
+const FALLBACK_TEMPLATE = DEFAULT_TEMPLATES["orders/fulfilled"];
+
+function fillTokens(text: string, tokens: TemplateTokens): string {
+  return text
+    .replace(/\{\{\s*customerName\s*\}\}/g, tokens.customerName || "there")
+    .replace(/\{\{\s*productTitle\s*\}\}/g, tokens.productTitle)
+    .replace(/\{\{\s*shopName\s*\}\}/g, tokens.shopName)
+    .replace(/\{\{\s*reviewUrl\s*\}\}/g, tokens.reviewUrl);
 }
 
-/**
- * Picks the template for a trigger type. "orders/paid" gets the no-ask
- * thank-you (order isn't even delivered yet); everything else — fulfilled,
- * or any future trigger — gets the real review ask.
- */
-export function resolveTemplate(
+// Vendor's saved EmailTemplate wins; otherwise fall back to the built-in
+// default for that trigger, or the review-ask default for anything unknown.
+export async function resolveTemplate(
+  shopId: string,
   triggerType: string,
-  input: { shopName: string; productTitle: string; reviewUrl: string; customerName?: string },
-) {
-  if (triggerType === "orders/paid") return day0IntroTemplate(input);
-  return reviewRequestTemplate(input);
+  tokens: TemplateTokens,
+): Promise<{ subject: string; html: string }> {
+  const custom = await db.emailTemplate.findUnique({
+    where: { shopId_triggerType: { shopId, triggerType } },
+  });
+  const template = custom ?? DEFAULT_TEMPLATES[triggerType] ?? FALLBACK_TEMPLATE;
+
+  return {
+    subject: fillTokens(template.subject, tokens),
+    html: fillTokens(template.bodyHtml, tokens),
+  };
 }

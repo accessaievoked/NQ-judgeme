@@ -19,6 +19,7 @@ export default function App() {
       <NavMenu>
         <Link to="/app" rel="home">Judge.me Reviews</Link>
         <Link to="/app/reviews">Reviews</Link>
+        <Link to="/app/email-templates">Email templates</Link>
         <Link to="/app/analytics">Analytics</Link>
         <Link to="/app/settings">Settings</Link>
         <Link to="/app/resources">Resources</Link>

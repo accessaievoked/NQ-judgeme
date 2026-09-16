@@ -32,6 +32,16 @@ function getTransporter() {
   return transporter;
 }
 
+// Strip tags for a plain-text fallback — HTML-only single-link emails get
+// flagged as spam far more often than ones with a text alternative.
+function htmlToText(html: string): string {
+  return html
+    .replace(/<a\s+[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/gi, "$2 ($1)")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export async function sendEmail(input: SendEmailInput): Promise<void> {
   const client = getTransporter();
 
@@ -45,5 +55,6 @@ export async function sendEmail(input: SendEmailInput): Promise<void> {
     to: input.toName ? `"${input.toName}" <${input.to}>` : input.to,
     subject: input.subject,
     html: input.html,
+    text: htmlToText(input.html),
   });
 }
