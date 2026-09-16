@@ -3,7 +3,7 @@ import { syncOrderById } from "../sync/orders.server";
 import { createReviewRequestsForOrderTrigger } from "../reviewRequests/schedule.server";
 import { markWebhookEventFailed, markWebhookEventProcessed } from "./ledger.server";
 
-const ORDER_TRIGGER_TOPICS = new Set(["orders/paid", "orders/fulfilled"]);
+const ORDER_TRIGGER_TOPICS = new Set(["orders/create", "orders/paid", "orders/fulfilled"]);
 
 // shopify.app.toml subscribes with "orders/paid" but the running webhook
 // context reports the topic back as "ORDERS_PAID" — normalize so ledger
