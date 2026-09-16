@@ -15,6 +15,13 @@ const BUTTON_STYLE =
 // Default wording per trigger, as plain {{token}} strings — same format a
 // vendor's custom EmailTemplate row uses, so both go through one fill path.
 export const DEFAULT_TEMPLATES: Record<string, { subject: string; bodyHtml: string }> = {
+  "orders/create": {
+    subject: "We've got your order, {{customerName}}!",
+    bodyHtml: `<div style="${WRAPPER_STYLE}">
+      <p>Hi {{customerName}}, thanks for ordering from {{shopName}}. We'll be in touch once it's on its way.</p>
+      <p style="color:#666;font-size:13px;">— {{shopName}}</p>
+    </div>`,
+  },
   "orders/paid": {
     subject: "How's your {{productTitle}}?",
     bodyHtml: `<div style="${WRAPPER_STYLE}">
