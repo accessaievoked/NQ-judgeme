@@ -1,10 +1,8 @@
 import db from "../db.server";
-import { sendReviewRequestEmail } from "../email/sender.server";
+import { sendEmail } from "../email/sender.server";
+import { resolveTemplate } from "../email/templates.server";
 
-/** Runs when a review request's scheduled send time arrives. */
-export async function processReviewRequestEmail(
-  reviewRequestId: string,
-): Promise<void> {
+export async function processReviewRequestEmail(reviewRequestId: string): Promise<void> {
   const reviewRequest = await db.reviewRequest.findUnique({
     where: { id: reviewRequestId },
     include: { customer: true, product: true, shop: true },
@@ -12,11 +10,17 @@ export async function processReviewRequestEmail(
   if (!reviewRequest || reviewRequest.status !== "PENDING") return;
   if (!reviewRequest.customer?.email || !reviewRequest.product) return;
 
-  await sendReviewRequestEmail({
+  const reviewUrl = `${process.env.SHOPIFY_APP_URL ?? ""}/r/${reviewRequest.token}`;
+
+  await sendEmail({
     to: reviewRequest.customer.email,
-    productTitle: reviewRequest.product.title,
-    token: reviewRequest.token,
-    shopDomain: reviewRequest.shop.domain,
+    toName: reviewRequest.customer.firstName ?? undefined,
+    ...resolveTemplate(reviewRequest.triggerType, {
+      shopName: reviewRequest.shop.domain,
+      productTitle: reviewRequest.product.title,
+      reviewUrl,
+      customerName: reviewRequest.customer.firstName ?? undefined,
+    }),
   });
 
   await db.reviewRequest.update({

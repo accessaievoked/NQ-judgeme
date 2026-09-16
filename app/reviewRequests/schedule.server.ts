@@ -1,23 +1,21 @@
 import crypto from "node:crypto";
 import db from "../db.server";
-import { syncOrderById } from "../sync/orders.server";
 import { enqueueReviewRequestEmail } from "../queue.server";
 
-const REQUEST_DELAY_DAYS = 14; // matches Judge.me's default "send after 14 days"
-
-/**
- * Runs when an order is fulfilled: makes sure the order is up to date, then
- * creates one ReviewRequest per distinct product on the order (skips
- * products we don't have a local mirror row for) and schedules its email.
- * Idempotent — re-running for the same order/product/channel just no-ops
- * via the ReviewRequest unique constraint.
- */
-export async function createReviewRequestsForOrder(
+// One row per product on the order, gated by that shop's ScheduleRule for
+// `triggerType`. delayDays=0 sends as soon as the trigger fires. Extending
+// to a new Shopify event just needs a new webhook + a call here with its
+// topic string — no branching. Caller is expected to have already synced
+// the order.
+export async function createReviewRequestsForOrderTrigger(
   shopId: string,
-  shopDomain: string,
   shopifyOrderId: string,
+  triggerType: string,
 ): Promise<void> {
-  await syncOrderById(shopId, shopDomain, shopifyOrderId);
+  const rule = await db.scheduleRule.findUnique({
+    where: { shopId_triggerType: { shopId, triggerType } },
+  });
+  if (!rule || !rule.enabled) return;
 
   const order = await db.order.findUnique({
     where: { shopId_shopifyId: { shopId, shopifyId: shopifyOrderId } },
@@ -26,7 +24,7 @@ export async function createReviewRequestsForOrder(
   if (!order || !order.customerId || !order.customer?.email) return;
 
   const scheduledAt = new Date();
-  scheduledAt.setDate(scheduledAt.getDate() + REQUEST_DELAY_DAYS);
+  scheduledAt.setDate(scheduledAt.getDate() + rule.delayDays);
 
   const seenProducts = new Set<string>();
   for (const item of order.lineItems) {
@@ -35,10 +33,11 @@ export async function createReviewRequestsForOrder(
 
     const reviewRequest = await db.reviewRequest.upsert({
       where: {
-        orderId_productId_channel: {
+        orderId_productId_channel_triggerType: {
           orderId: order.id,
           productId: item.productId,
           channel: "email",
+          triggerType,
         },
       },
       create: {
@@ -46,6 +45,7 @@ export async function createReviewRequestsForOrder(
         orderId: order.id,
         customerId: order.customerId,
         productId: item.productId,
+        triggerType,
         token: crypto.randomBytes(24).toString("base64url"),
         scheduledAt,
       },
@@ -54,10 +54,7 @@ export async function createReviewRequestsForOrder(
 
     if (reviewRequest.status === "PENDING") {
       const delayMs = Math.max(0, scheduledAt.getTime() - Date.now());
-      await enqueueReviewRequestEmail(
-        { reviewRequestId: reviewRequest.id },
-        delayMs,
-      );
+      await enqueueReviewRequestEmail({ reviewRequestId: reviewRequest.id }, delayMs);
     }
   }
 }

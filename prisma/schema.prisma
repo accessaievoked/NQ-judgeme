@@ -61,12 +61,44 @@ model Shop {
   createdAt         DateTime   @default(now())
   updatedAt         DateTime   @updatedAt
 
+  settings       ShopSettings?
   products       Product[]
   variants       Variant[]
   customers      Customer[]
   orders         Order[]
   orderLineItems OrderLineItem[]
   reviewRequests ReviewRequest[]
+  reviews        Review[]
+  scheduleRules  ScheduleRule[]
+}
+
+// Per-shop preferences that aren't trigger scheduling (that's ScheduleRule).
+model ShopSettings {
+  id        String   @id @default(cuid())
+  shopId    String   @unique
+  shop      Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// One row per Shopify event type ("orders/paid", "orders/fulfilled", and any
+// future webhook topic a vendor wants a request tied to). delayDays=0 means
+// "fire as soon as the event hits" — useful for testing and for a same-day
+// touchpoint. Whenever a webhook of `triggerType` fires, the handler checks
+// for an enabled rule here and schedules the request from it — new trigger
+// types just need a new row + a webhook subscription, no code branching.
+model ScheduleRule {
+  id          String   @id @default(cuid())
+  shopId      String
+  shop        Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  triggerType String
+  delayDays   Int      @default(0)
+  enabled     Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([shopId, triggerType])
+  @@index([shopId])
 }
 
 model Product {
@@ -87,6 +119,7 @@ model Product {
   variants       Variant[]
   lineItems      OrderLineItem[]
   reviewRequests ReviewRequest[]
+  reviews        Review[]
 
   @@unique([shopId, shopifyId])
   @@index([shopId])
@@ -127,6 +160,7 @@ model Customer {
 
   orders         Order[]
   reviewRequests ReviewRequest[]
+  reviews        Review[]
 
   @@unique([shopId, shopifyId])
   @@index([shopId])
@@ -206,6 +240,7 @@ model ReviewRequest {
   product          Product?            @relation(fields: [productId], references: [id], onDelete: SetNull)
   token            String              @unique
   channel          String              @default("email")
+  triggerType      String
   status           ReviewRequestStatus @default(PENDING)
   scheduledAt      DateTime?
   sentAt           DateTime?
@@ -215,10 +250,48 @@ model ReviewRequest {
   cancelledAt      DateTime?
   createdAt        DateTime            @default(now())
   updatedAt        DateTime            @updatedAt
+  review           Review?
 
-  @@unique([orderId, productId, channel])
+  @@unique([orderId, productId, channel, triggerType])
   @@index([shopId])
   @@index([token])
+}
+
+// ---------------------------------------------------------------------------
+// Reviews (submitted via the hosted /r/:token form)
+// ---------------------------------------------------------------------------
+
+enum ReviewStatus {
+  PENDING
+  PUBLISHED
+  HIDDEN
+  SPAM
+  REJECTED
+}
+
+model Review {
+  id              String        @id @default(cuid())
+  shopId          String
+  shop            Shop          @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  productId       String
+  product         Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
+  reviewRequestId String        @unique
+  reviewRequest   ReviewRequest @relation(fields: [reviewRequestId], references: [id], onDelete: Cascade)
+  customerId      String?
+  customer        Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  rating          Int
+  title           String?
+  body            String?
+  authorName      String?
+  verifiedBuyer   Boolean       @default(true)
+  status          ReviewStatus  @default(PENDING)
+  hiddenReason    String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([shopId])
+  @@index([productId])
+  @@index([shopId, status])
 }
 
 // ---------------------------------------------------------------------------

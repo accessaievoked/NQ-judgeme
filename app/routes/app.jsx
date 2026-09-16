@@ -18,7 +18,6 @@ export default function App() {
     <AppProvider embedded apiKey={apiKey}>
       <NavMenu>
         <Link to="/app" rel="home">Judge.me Reviews</Link>
-        <Link to="/app/products">Products</Link>
         <Link to="/app/reviews">Reviews</Link>
         <Link to="/app/analytics">Analytics</Link>
         <Link to="/app/settings">Settings</Link>

@@ -1,63 +1,34 @@
 import db from "../db.server";
 import { syncOrderById } from "../sync/orders.server";
-import { createReviewRequestsForOrder } from "../reviewRequests/schedule.server";
-import {
-  markWebhookEventFailed,
-  markWebhookEventProcessed,
-} from "./ledger.server";
+import { createReviewRequestsForOrderTrigger } from "../reviewRequests/schedule.server";
+import { markWebhookEventFailed, markWebhookEventProcessed } from "./ledger.server";
 
-/**
- * Dispatches a ledgered webhook event to the code that actually does the
- * work. Runs inside the worker, never inside the HTTP webhook request.
- */
+const ORDER_TRIGGER_TOPICS = new Set(["orders/paid", "orders/fulfilled"]);
+
+// Runs inside the worker, dispatching a ledgered event to the handler for
+// its topic. Order-lifecycle topics all go through the same generic
+// trigger-scheduling path — adding a new one is just adding its topic here
+// and a webhook subscription in shopify.app.toml.
 export async function processWebhookEvent(webhookEventId: string): Promise<void> {
-  const event = await db.webhookEvent.findUnique({
-    where: { id: webhookEventId },
-  });
+  const event = await db.webhookEvent.findUnique({ where: { id: webhookEventId } });
   if (!event) return;
 
   try {
-    await db.webhookEvent.update({
-      where: { id: event.id },
-      data: { status: "PROCESSING" },
-    });
+    await db.webhookEvent.update({ where: { id: event.id }, data: { status: "PROCESSING" } });
 
-    switch (event.topic) {
-      case "orders/paid": {
-        const shop = await db.shop.findUnique({
-          where: { domain: event.shopDomain },
-        });
-        if (!shop) {
-          // Shop row may not exist yet if this races the OAuth afterAuth
-          // hook. Throw so BullMQ retries with backoff instead of dropping
-          // the event.
-          throw new Error(`No Shop found for domain ${event.shopDomain}`);
-        }
-
-        const payload = event.payload as { id?: number | string } | null;
-        if (payload?.id != null) {
-          const shopifyOrderId = `gid://shopify/Order/${payload.id}`;
-          await syncOrderById(shop.id, shop.domain, shopifyOrderId);
-        }
-        break;
+    if (ORDER_TRIGGER_TOPICS.has(event.topic)) {
+      const shop = await db.shop.findUnique({ where: { domain: event.shopDomain } });
+      if (!shop) {
+        // May race the afterAuth hook — throw so BullMQ retries with backoff.
+        throw new Error(`No Shop found for domain ${event.shopDomain}`);
       }
-      case "orders/fulfilled": {
-        const shop = await db.shop.findUnique({
-          where: { domain: event.shopDomain },
-        });
-        if (!shop) {
-          throw new Error(`No Shop found for domain ${event.shopDomain}`);
-        }
 
-        const payload = event.payload as { id?: number | string } | null;
-        if (payload?.id != null) {
-          const shopifyOrderId = `gid://shopify/Order/${payload.id}`;
-          await createReviewRequestsForOrder(shop.id, shop.domain, shopifyOrderId);
-        }
-        break;
+      const payload = event.payload as { id?: number | string } | null;
+      if (payload?.id != null) {
+        const shopifyOrderId = `gid://shopify/Order/${payload.id}`;
+        await syncOrderById(shop.id, shop.domain, shopifyOrderId);
+        await createReviewRequestsForOrderTrigger(shop.id, shopifyOrderId, event.topic);
       }
-      default:
-        break;
     }
 
     await markWebhookEventProcessed(event.id);
