@@ -7,7 +7,11 @@
   <p class="jm-reviews__loading">Loading reviews…</p>
 </div>
 
-{{ 'jm-widget.css' | asset_url | stylesheet_tag }}
+{% comment %}
+  Styling now comes from the shop's WidgetTheme (customizable in
+  /app/widget-style), injected as a <style> tag by jm-widget.js itself —
+  no static stylesheet here.
+{% endcomment %}
 <script src="{{ 'jm-widget.js' | asset_url }}" defer></script>
 
 {% schema %}

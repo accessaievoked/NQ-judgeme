@@ -4,7 +4,12 @@ export interface TemplateTokens {
   customerName?: string;
   productTitle: string;
   shopName: string;
-  reviewUrl: string;
+  reviewUrl?: string;
+  reminderNumber?: number;
+  // Pre-rendered HTML block (or "" for none) — used by review_thankyou to
+  // conditionally show a discount code without a full conditional-block
+  // templating syntax. See reviewRequests/sendThankYou.server.ts.
+  discountSection?: string;
 }
 
 const WRAPPER_STYLE =
@@ -36,6 +41,36 @@ export const DEFAULT_TEMPLATES: Record<string, { subject: string; bodyHtml: stri
       <p style="color:#666;font-size:13px;margin-top:32px;">— {{shopName}}</p>
     </div>`,
   },
+  // Not tied to a Shopify webhook — fired by the no-review-yet reminder
+  // chain (see reviewRequests/sendReminder.server.ts). {{reminderNumber}}
+  // is this reminder's 1-based position (1, 2, or 3).
+  review_reminder: {
+    subject: "Reminder: how's your {{productTitle}}?",
+    bodyHtml: `<div style="${WRAPPER_STYLE}">
+      <h2 style="margin-top:0;">Hi {{customerName}},</h2>
+      <p>Just a friendly reminder (#{{reminderNumber}}) — we'd still love to hear
+      what you think of <strong>{{productTitle}}</strong> from <strong>{{shopName}}</strong>.</p>
+      <p style="text-align:center;">
+        <a href="{{reviewUrl}}" style="${BUTTON_STYLE}">Leave a review</a>
+      </p>
+      <p style="color:#666;font-size:13px;margin-top:32px;">— {{shopName}}</p>
+    </div>`,
+  },
+  // Fired after a review is actually submitted (r.$token.jsx action), not
+  // tied to a webhook. {{discountSection}} is "" when the shop has the
+  // thank-you discount off, the discount call failed, or there's no
+  // customer email to send a code to — the wording below reads fine either
+  // way since the discount block is a self-contained aside.
+  review_thankyou: {
+    subject: "Thanks for reviewing {{productTitle}}!",
+    bodyHtml: `<div style="${WRAPPER_STYLE}">
+      <h2 style="margin-top:0;">Thanks, {{customerName}}!</h2>
+      <p>We really appreciate you taking the time to review
+      <strong>{{productTitle}}</strong> from <strong>{{shopName}}</strong>.</p>
+      {{discountSection}}
+      <p style="color:#666;font-size:13px;margin-top:32px;">— {{shopName}}</p>
+    </div>`,
+  },
 };
 
 const FALLBACK_TEMPLATE = DEFAULT_TEMPLATES["orders/fulfilled"];
@@ -45,7 +80,9 @@ function fillTokens(text: string, tokens: TemplateTokens): string {
     .replace(/\{\{\s*customerName\s*\}\}/g, tokens.customerName || "there")
     .replace(/\{\{\s*productTitle\s*\}\}/g, tokens.productTitle)
     .replace(/\{\{\s*shopName\s*\}\}/g, tokens.shopName)
-    .replace(/\{\{\s*reviewUrl\s*\}\}/g, tokens.reviewUrl);
+    .replace(/\{\{\s*reviewUrl\s*\}\}/g, tokens.reviewUrl ?? "")
+    .replace(/\{\{\s*reminderNumber\s*\}\}/g, String(tokens.reminderNumber ?? ""))
+    .replace(/\{\{\s*discountSection\s*\}\}/g, tokens.discountSection ?? "");
 }
 
 // Vendor's saved EmailTemplate wins; otherwise fall back to the built-in

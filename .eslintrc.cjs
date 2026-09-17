@@ -18,6 +18,10 @@ module.exports = {
     browser: true,
     commonjs: true,
     es6: true,
+    // React Router route modules mix server code (loader/action, using
+    // process.env etc.) and client components in one file, so this can't be
+    // scoped to *.server.{js,ts} the way the Node override below is.
+    node: true,
   },
   ignorePatterns: ["!**/.server", "!**/.client"],
 
@@ -50,6 +54,11 @@ module.exports = {
       },
       rules: {
         "react/no-unknown-property": ["error", { ignore: ["variant"] }],
+        // This project has never used the prop-types package (it's not even
+        // a dependency) — every route component just destructures loader
+        // data directly. The rule fails on effectively every component in
+        // the app, so it's noise here rather than a real check.
+        "react/prop-types": "off",
       },
     },
 

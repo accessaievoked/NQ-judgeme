@@ -1,49 +1,73 @@
 (function () {
-  function stars(rating) {
-    var s = "";
-    for (var i = 1; i <= 5; i++) s += i <= Math.round(rating) ? "★" : "☆";
-    return s;
+  var STYLE_ID = "jm-reviews-style";
+
+  // The server already rendered the merchant's custom (or default) template
+  // into final HTML — see app/routes/apps.reviews.jsx and
+  // app/reviewWidget/render.server.ts. This script injects it and wires up
+  // the {{rateWidget}} inline "click a star, submit, no page nav" control.
+  function injectCss(css) {
+    if (document.getElementById(STYLE_ID)) return;
+    var style = document.createElement("style");
+    style.id = STYLE_ID;
+    style.textContent = css;
+    document.head.appendChild(style);
   }
 
-  function escapeHtml(str) {
-    var div = document.createElement("div");
-    div.textContent = str;
-    return div.innerHTML;
-  }
+  function wireRateWidget(container, productId) {
+    var rate = container.querySelector("[data-jm-rate]");
+    if (!rate) return;
 
-  function render(container, data) {
-    if (!data.count) {
-      container.innerHTML = '<p class="jm-reviews__empty">No reviews yet.</p>';
-      return;
-    }
+    var stars = rate.querySelectorAll(".jm-rate__star");
+    var form = rate.querySelector("[data-jm-rate-form]");
+    var valueInput = rate.querySelector("[data-jm-rate-value]");
+    var thanks = rate.querySelector("[data-jm-rate-thanks]");
 
-    var html =
-      '<div class="jm-reviews__summary">' +
-      '<span class="jm-reviews__stars">' + stars(data.average) + "</span>" +
-      '<span class="jm-reviews__count">' +
-      data.average.toFixed(1) + " (" + data.count + (data.count === 1 ? " review" : " reviews") + ")" +
-      "</span></div>";
-
-    data.reviews.forEach(function (r) {
-      html +=
-        '<div class="jm-reviews__item">' +
-        '<div class="jm-reviews__item-stars">' + stars(r.rating) + "</div>" +
-        (r.title ? '<div class="jm-reviews__item-title">' + escapeHtml(r.title) + "</div>" : "") +
-        (r.body ? '<div class="jm-reviews__item-body">' + escapeHtml(r.body) + "</div>" : "") +
-        '<div class="jm-reviews__item-author">' + escapeHtml(r.authorName || "Anonymous") + "</div>" +
-        "</div>";
+    stars.forEach(function (star) {
+      star.addEventListener("click", function () {
+        var value = Number(star.getAttribute("data-value"));
+        valueInput.value = value;
+        stars.forEach(function (s) {
+          s.classList.toggle("is-selected", Number(s.getAttribute("data-value")) <= value);
+        });
+        form.hidden = false;
+      });
     });
 
-    container.innerHTML = html;
+    form.addEventListener("submit", function (event) {
+      event.preventDefault();
+      fetch("/apps/reviews?productId=" + encodeURIComponent(productId), {
+        method: "POST",
+        body: new FormData(form),
+      })
+        .then(function (res) { return res.json(); })
+        .then(function (data) {
+          if (!data.ok) throw new Error(data.error || "Submit failed");
+          form.hidden = true;
+          thanks.hidden = false;
+          loadReviews(container, productId);
+        })
+        .catch(function (error) {
+          console.error("Error submitting review", error);
+        });
+    });
+  }
+
+  function loadReviews(container, productId) {
+    fetch("/apps/reviews?productId=" + encodeURIComponent(productId))
+      .then(function (res) { return res.json(); })
+      .then(function (data) {
+        injectCss(data.css || "");
+        container.innerHTML = data.html || "";
+        wireRateWidget(container, productId);
+      })
+      .catch(function (error) {
+        console.error("Error fetching reviews", error);
+        container.innerHTML = '<p class="jm-reviews__empty">Reviews unavailable.</p>';
+      });
   }
 
   document.querySelectorAll("[data-jm-reviews]").forEach(function (container) {
     var productId = container.getAttribute("data-product-id");
-    fetch("/apps/reviews?productId=" + encodeURIComponent(productId))
-      .then(function (res) { return res.json(); })
-      .then(function (data) { render(container, data); })
-      .catch(function () {
-        container.innerHTML = '<p class="jm-reviews__empty">Reviews unavailable.</p>';
-      });
+    loadReviews(container, productId);
   });
 })();

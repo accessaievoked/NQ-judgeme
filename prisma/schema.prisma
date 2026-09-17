@@ -61,16 +61,18 @@ model Shop {
   createdAt         DateTime   @default(now())
   updatedAt         DateTime   @updatedAt
 
-  settings       ShopSettings?
-  products       Product[]
-  variants       Variant[]
-  customers      Customer[]
-  orders         Order[]
-  orderLineItems OrderLineItem[]
-  reviewRequests ReviewRequest[]
-  reviews        Review[]
-  scheduleRules  ScheduleRule[]
-  emailTemplates EmailTemplate[]
+  settings        ShopSettings?
+  widgetTheme     WidgetTheme?
+  products        Product[]
+  variants        Variant[]
+  customers       Customer[]
+  orders          Order[]
+  orderLineItems  OrderLineItem[]
+  reviewRequests  ReviewRequest[]
+  reviews         Review[]
+  scheduleRules   ScheduleRule[]
+  emailTemplates  EmailTemplate[]
+  reviewDiscounts ReviewDiscount[]
 }
 
 // Single global row. The web process gets the live tunnel URL injected by
@@ -84,21 +86,62 @@ model AppConfig {
 
 // Per-shop preferences that aren't trigger scheduling (that's ScheduleRule).
 model ShopSettings {
-  id        String   @id @default(cuid())
-  shopId    String   @unique
-  shop      Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id                       String   @id @default(cuid())
+  shopId                   String   @unique
+  shop                     Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  // When true, a submitted review is published immediately (skipping the
+  // PENDING moderation queue) if its rating >= autoPublishMinRating.
+  autoPublishEnabled       Boolean  @default(false)
+  autoPublishMinRating     Int      @default(4)
+  // Ordered day-offsets for the no-review-yet follow-up chain, e.g. [3, 7, 14]
+  // means: 3 days after the request email, then 7 days after that reminder,
+  // then 14 after that one. Each entry must be >=1 (no same-day reminders —
+  // day 0 is the original request); capped to 3 entries to avoid spam. Empty
+  // = reminders off.
+  reminderDays             Int[]    @default([])
+  // Thank-you discount for submitting a review — off by default. Vendor
+  // controls whether it fires at all, the percentage off, and how many days
+  // the code stays valid; see discounts/createReviewDiscount.server.ts.
+  reviewDiscountEnabled    Boolean  @default(false)
+  reviewDiscountPercentage Int      @default(10)
+  reviewDiscountExpiryDays Int      @default(30)
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+}
+
+// The storefront review widget's markup/styling, per shop. No row = use the
+// hardcoded defaults in reviewWidget/defaults.server.ts. `html` holds
+// <!--ITEM-->...<!--/ITEM--> and <!--EMPTY-->...<!--/EMPTY--> marker blocks
+// that render.server.ts repeats/swaps per review; see that file for the
+// full {{token}} list. `css` is injected as-is into a <style> tag.
+model WidgetTheme {
+  id          String   @id @default(cuid())
+  shopId      String   @unique
+  shop        Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  html        String
+  css         String
+  // Optional structured alternative to hand-written CSS — a list of
+  // {target, property, value} rows a non-coder can fill in from dropdowns
+  // (see reviewWidget/styleBlocks.server.ts for the target/property
+  // catalog). Compiled to CSS and appended after `css` at render time, so
+  // these take precedence over the raw stylesheet.
+  styleBlocks Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
 
 // Editable wording per trigger type. subject/bodyHtml support {{tokens}}
-// (customerName, productTitle, shopName, reviewUrl) filled in at send time.
-// No row = use the hardcoded default in templates.server.ts.
+// (customerName, productTitle, shopName, reviewUrl, reminderNumber) filled
+// in at send time. No row = use the hardcoded default in templates.server.ts.
+// mode "normal" = edited with the constrained rich-text editor; "html" =
+// vendor writes/pastes raw HTML directly, full flexibility, no toolbar
+// limits (and no safety net — it's sent as-is).
 model EmailTemplate {
   id          String   @id @default(cuid())
   shopId      String
   shop        Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
   triggerType String
+  mode        String   @default("normal")
   subject     String
   bodyHtml    String
   createdAt   DateTime @default(now())
@@ -251,33 +294,40 @@ enum ReviewRequestStatus {
   SENT
   REMINDED_1
   REMINDED_2
+  REMINDED_3
   COMPLETED
   CANCELLED
 }
 
 model ReviewRequest {
-  id               String              @id @default(cuid())
-  shopId           String
-  shop             Shop                @relation(fields: [shopId], references: [id], onDelete: Cascade)
-  orderId          String
-  order            Order               @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  customerId       String?
-  customer         Customer?           @relation(fields: [customerId], references: [id], onDelete: SetNull)
-  productId        String?
-  product          Product?            @relation(fields: [productId], references: [id], onDelete: SetNull)
-  token            String              @unique
-  channel          String              @default("email")
-  triggerType      String
-  status           ReviewRequestStatus @default(PENDING)
-  scheduledAt      DateTime?
-  sentAt           DateTime?
-  firstReminderAt  DateTime?
-  secondReminderAt DateTime?
-  completedAt      DateTime?
-  cancelledAt      DateTime?
-  createdAt        DateTime            @default(now())
-  updatedAt        DateTime            @updatedAt
-  review           Review?
+  id                   String              @id @default(cuid())
+  shopId               String
+  shop                 Shop                @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  orderId              String
+  order                Order               @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  customerId           String?
+  customer             Customer?           @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  productId            String?
+  product              Product?            @relation(fields: [productId], references: [id], onDelete: SetNull)
+  token                String              @unique
+  channel              String              @default("email")
+  triggerType          String
+  status               ReviewRequestStatus @default(PENDING)
+  scheduledAt          DateTime?
+  sentAt               DateTime?
+  firstReminderAt      DateTime?
+  secondReminderAt     DateTime?
+  thirdReminderAt      DateTime?
+  // The currently-scheduled reminder job's BullMQ id, if any (see
+  // queue.server.ts). On review submission we best-effort cancel this job;
+  // the reminder worker itself re-checks `review`/`status` before sending
+  // as a fallback in case that cancellation didn't land in time.
+  pendingReminderJobId String?
+  completedAt          DateTime?
+  cancelledAt          DateTime?
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+  review               Review?
 
   @@unique([orderId, productId, channel, triggerType])
   @@index([shopId])
@@ -297,27 +347,66 @@ enum ReviewStatus {
 }
 
 model Review {
-  id              String        @id @default(cuid())
+  id              String         @id @default(cuid())
   shopId          String
-  shop            Shop          @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  shop            Shop           @relation(fields: [shopId], references: [id], onDelete: Cascade)
   productId       String
-  product         Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
-  reviewRequestId String        @unique
-  reviewRequest   ReviewRequest @relation(fields: [reviewRequestId], references: [id], onDelete: Cascade)
+  product         Product        @relation(fields: [productId], references: [id], onDelete: Cascade)
+  // Null for a review submitted directly from the storefront's inline
+  // {{rateWidget}} control (apps.reviews.jsx action) — those aren't tied to
+  // an email/token flow at all, unlike the /r/:token hosted-form path.
+  reviewRequestId String?        @unique
+  reviewRequest   ReviewRequest? @relation(fields: [reviewRequestId], references: [id], onDelete: Cascade)
   customerId      String?
-  customer        Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  customer        Customer?      @relation(fields: [customerId], references: [id], onDelete: SetNull)
   rating          Int
   title           String?
   body            String?
   authorName      String?
-  verifiedBuyer   Boolean       @default(true)
-  status          ReviewStatus  @default(PENDING)
+  verifiedBuyer   Boolean        @default(true)
+  status          ReviewStatus   @default(PENDING)
   hiddenReason    String?
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  discount ReviewDiscount?
 
   @@index([shopId])
   @@index([productId])
+  @@index([shopId, status])
+}
+
+enum ReviewDiscountStatus {
+  PENDING
+  CREATED
+  FAILED
+}
+
+// A one-time thank-you discount generated after a review is submitted (see
+// discounts/createReviewDiscount.server.ts). One row per review — the
+// `reviewId` unique constraint is the idempotency guard against creating a
+// second code for the same review. `status: FAILED` is the "flag for
+// retry/manual follow-up" signal: Shopify's discountCodeBasicCreate call
+// didn't succeed, `failureReason` has why, and the review's thank-you email
+// still went out, just without a code.
+model ReviewDiscount {
+  id                String               @id @default(cuid())
+  shopId            String
+  shop              Shop                 @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  reviewId          String               @unique
+  review            Review               @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  customerEmail     String
+  code              String               @unique
+  shopifyDiscountId String?
+  percentageOff     Int
+  status            ReviewDiscountStatus @default(PENDING)
+  failureReason     String?
+  expiresAt         DateTime
+  redeemedAt        DateTime?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  @@index([shopId])
   @@index([shopId, status])
 }
 

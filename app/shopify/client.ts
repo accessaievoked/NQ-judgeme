@@ -58,16 +58,3 @@ export async function shopifyGraphql<T = unknown>(
     return body.data;
   });
 }
-
-/** Throws if a mutation payload carries non-empty `userErrors`. */
-export function assertNoUserErrors(
-  userErrors: Array<{ field?: string[] | null; message: string }> | null | undefined,
-  context: string,
-): void {
-  if (userErrors && userErrors.length > 0) {
-    throw new ShopifyGraphqlError(
-      `${context}: ${userErrors.map((e) => e.message).join("; ")}`,
-      userErrors,
-    );
-  }
-}

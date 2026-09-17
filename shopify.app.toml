@@ -2,11 +2,11 @@
 
 client_id = "aa49199f89941741bcd238f1efbde10a"
 name = "judgeme-demo-app"
-application_url = "https://example.com"
+application_url = "https://overturn-dutiful-cabbage.ngrok-free.dev"
 embedded = true
 
 [access_scopes]
-scopes = "write_products,write_metaobjects,write_metaobject_definitions,read_orders,read_customers"
+scopes = "write_products,write_metaobjects,write_metaobject_definitions,read_orders,read_customers,write_files,read_discounts,write_discounts"
 
 [product.metafields.app.demo_info]
 type = "single_line_text_field"
@@ -52,13 +52,12 @@ topics = ["orders/fulfilled"]
 uri = "/webhooks/orders/fulfilled"
 
 [app_proxy]
-url = "https://example.com/apps/reviews"
+url = "https://overturn-dutiful-cabbage.ngrok-free.dev/apps/reviews"
 subpath = "reviews"
 prefix = "apps"
 
 [auth]
-redirect_urls = [ "https://example.com/api/auth" ]
+redirect_urls = [ "https://overturn-dutiful-cabbage.ngrok-free.dev/api/auth" ]
 
 [build]
-include_config_on_deploy = true
 automatically_update_urls_on_dev = true

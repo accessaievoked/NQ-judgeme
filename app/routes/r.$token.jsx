@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { Form, useActionData, useLoaderData } from "react-router";
 import db from "../db.server";
+import { cancelReviewReminder, enqueueReviewThankYou } from "../queue.server";
 
 export const loader = async ({ params }) => {
   const reviewRequest = await db.reviewRequest.findUnique({
@@ -24,7 +25,7 @@ export const loader = async ({ params }) => {
 export const action = async ({ request, params }) => {
   const reviewRequest = await db.reviewRequest.findUnique({
     where: { token: params.token },
-    include: { review: true },
+    include: { review: true, customer: true },
   });
 
   if (!reviewRequest) {
@@ -38,7 +39,11 @@ export const action = async ({ request, params }) => {
   const rating = Number(formData.get("rating"));
   const title = String(formData.get("title") || "").trim().slice(0, 200) || null;
   const body = String(formData.get("body") || "").trim().slice(0, 5000) || null;
-  const authorName = String(formData.get("authorName") || "").trim().slice(0, 100) || null;
+  const typedName = String(formData.get("authorName") || "").trim().slice(0, 100) || null;
+  const customerName = reviewRequest.customer
+    ? [reviewRequest.customer.firstName, reviewRequest.customer.lastName].filter(Boolean).join(" ") || null
+    : null;
+  const authorName = customerName || typedName;
 
   if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
     return { ok: false, error: "Please choose a star rating." };
@@ -47,7 +52,13 @@ export const action = async ({ request, params }) => {
     return { ok: false, error: "This review link isn't tied to a product." };
   }
 
-  await db.review.create({
+  const settings = await db.shopSettings.findUnique({
+    where: { shopId: reviewRequest.shopId },
+    select: { autoPublishEnabled: true, autoPublishMinRating: true },
+  });
+  const autoPublish = Boolean(settings?.autoPublishEnabled) && rating >= (settings?.autoPublishMinRating ?? 4);
+
+  const review = await db.review.create({
     data: {
       shopId: reviewRequest.shopId,
       productId: reviewRequest.productId,
@@ -57,13 +68,26 @@ export const action = async ({ request, params }) => {
       title,
       body,
       authorName,
+      status: autoPublish ? "PUBLISHED" : "PENDING",
     },
   });
 
   await db.reviewRequest.update({
     where: { id: reviewRequest.id },
-    data: { status: "COMPLETED", completedAt: new Date() },
+    data: { status: "COMPLETED", completedAt: new Date(), pendingReminderJobId: null },
   });
+
+  // Best-effort — if this doesn't land (job already running, Redis blip),
+  // processReviewReminder's own review/status check is the fallback that
+  // stops the chain instead.
+  if (reviewRequest.pendingReminderJobId) {
+    await cancelReviewReminder(reviewRequest.pendingReminderJobId);
+  }
+
+  // Backgrounded: creates the vendor's thank-you discount (if that shop has
+  // one turned on in /app/settings) and sends the thank-you email either
+  // way. See reviewRequests/sendThankYou.server.ts.
+  await enqueueReviewThankYou({ reviewId: review.id });
 
   return { ok: true, submitted: true };
 };
