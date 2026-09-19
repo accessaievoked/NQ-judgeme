@@ -12,11 +12,11 @@ export const DEFAULT_WIDGET_HTML = `<div class="jm-reviews__summary">
 <p class="jm-reviews__empty">No reviews yet. Be the first to leave one!</p>
 <!--/EMPTY-->
 <!--ITEM-->
-<div class="jm-reviews__item">
-  <div class="jm-reviews__item-stars">{{stars}}</div>
-  <div class="jm-reviews__item-title">{{title}}</div>
-  <div class="jm-reviews__item-body">{{body}}</div>
-  <div class="jm-reviews__item-author">{{author}}</div>
+<div class="jm-reviews__item" data-jm-block="item" data-jm-block-type="container">
+  <div class="jm-reviews__item-stars" data-jm-block="item-stars" data-jm-block-type="stars">{{stars}}</div>
+  <div class="jm-reviews__item-title" data-jm-block="item-title" data-jm-block-type="title">{{title}}</div>
+  <div class="jm-reviews__item-body" data-jm-block="item-body" data-jm-block-type="body">{{body}}</div>
+  <div class="jm-reviews__item-author" data-jm-block="item-author" data-jm-block-type="author">{{author}}</div>
 </div>
 <!--/ITEM-->`;
 
@@ -29,6 +29,11 @@ export const DEFAULT_WIDGET_CSS = `.jm-reviews { font-family: inherit; max-width
 .jm-reviews__item-title { font-weight: 600; margin: 4px 0; }
 .jm-reviews__item-body { margin: 4px 0; color: #333; }
 .jm-reviews__item-author { color: #888; font-size: 12px; }
+.jm-reviews__item-avatar { display: inline-flex; margin: 4px 0; }
+.jm-reviews__item-avatar-initials { width: 28px; height: 28px; border-radius: 999px; background: #e4e4e7; color: #52525b; font-size: 12px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; }
+.jm-reviews__item-verified { margin: 4px 0; }
+.jm-reviews__item-verified-badge { color: #2e7d32; font-size: 12px; font-weight: 600; }
+.jm-reviews__item-group { display: flex; align-items: center; gap: 8px; }
 .jm-reviews__empty { color: #666; }
 .jm-rate { margin: 12px 0 20px; }
 .jm-rate__stars { display: flex; gap: 4px; }
