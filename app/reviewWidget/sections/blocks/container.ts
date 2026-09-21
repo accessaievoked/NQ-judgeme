@@ -1,5 +1,5 @@
 import type { BlockModule } from "../types";
-import { flexLayoutControls, sizeControls, spacingControls, appearanceControls } from "../controls";
+import { flexLayoutControls, sizeControls, spacingControls, appearanceControls, positionControls } from "../controls";
 
 export const containerBlock: BlockModule = {
   type: "container",
@@ -12,5 +12,5 @@ export const containerBlock: BlockModule = {
   // positioned absolutely inside it, same reasoning as the review card
   // itself (see reviewCard.ts).
   css: `.jm-reviews__item-group { position: relative; display: flex; align-items: center; gap: 8px; }`,
-  controls: [...flexLayoutControls(), ...sizeControls(), ...spacingControls(), ...appearanceControls()],
+  controls: [...flexLayoutControls(), ...sizeControls(), ...spacingControls(), ...appearanceControls(), ...positionControls()],
 };

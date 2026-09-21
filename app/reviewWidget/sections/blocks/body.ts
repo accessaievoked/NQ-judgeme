@@ -1,5 +1,5 @@
 import type { BlockModule } from "../types";
-import { typographyControls, sizeControls, spacingControls, appearanceControls } from "../controls";
+import { typographyControls, sizeControls, spacingControls, appearanceControls, positionControls } from "../controls";
 
 export const bodyBlock: BlockModule = {
   type: "body",
@@ -14,5 +14,6 @@ export const bodyBlock: BlockModule = {
     ...sizeControls(),
     ...spacingControls(),
     ...appearanceControls(),
+    ...positionControls(),
   ],
 };

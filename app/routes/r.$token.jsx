@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Form, useActionData, useLoaderData } from "react-router";
 import db from "../db.server";
 import { cancelReviewReminder, enqueueReviewThankYou } from "../queue.server";
+import { invalidateReviewCache } from "../reviewWidget/reviewCache.server";
 
 export const loader = async ({ params }) => {
   const reviewRequest = await db.reviewRequest.findUnique({
@@ -71,6 +72,8 @@ export const action = async ({ request, params }) => {
       status: autoPublish ? "PUBLISHED" : "PENDING",
     },
   });
+
+  if (autoPublish) await invalidateReviewCache(reviewRequest.shopId, reviewRequest.productId);
 
   await db.reviewRequest.update({
     where: { id: reviewRequest.id },

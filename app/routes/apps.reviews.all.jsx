@@ -12,6 +12,8 @@
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
 import { DEFAULT_WIDGET_CSS } from "../reviewWidget/defaults.server";
+import { compileStyleBlocks } from "../reviewWidget/styleBlocks.server";
+import { getCachedAllPage, setCachedAllPage } from "../reviewWidget/reviewCache.server";
 
 const PAGE_SIZE = 10;
 const PAGE_WINDOW = 2; // numbered links shown on each side of the current page
@@ -97,7 +99,7 @@ function reviewItemHtml(review) {
   </div>`;
 }
 
-function pageHtml({ productTitle, reviews, page, totalPages, total, q, base }) {
+function pageHtml({ productTitle, reviews, page, totalPages, total, q, base, widgetCss }) {
   return `<!doctype html>
 <html>
 <head>
@@ -122,7 +124,7 @@ function pageHtml({ productTitle, reviews, page, totalPages, total, q, base }) {
   .jm-reviews-page__num:hover, .jm-reviews-page__nav:hover { background: #f4f4f4; }
   .jm-reviews-page__num.is-current { background: #1a1a1a; color: #fff; }
   .jm-reviews-page__ellipsis { padding: 0 4px; color: #999; }
-  ${DEFAULT_WIDGET_CSS}
+  ${widgetCss}
 </style>
 </head>
 <body>
@@ -151,7 +153,7 @@ export const loader = async ({ request }) => {
   const html = (body) => new Response(body, { headers: { "Content-Type": "text/html; charset=utf-8" } });
 
   if (!session || !productId) {
-    return html(pageHtml({ productTitle: null, reviews: [], page: 1, totalPages: 1, total: 0, q, base: url }));
+    return html(pageHtml({ productTitle: null, reviews: [], page: 1, totalPages: 1, total: 0, q, base: url, widgetCss: DEFAULT_WIDGET_CSS }));
   }
 
   const shop = await db.shop.findUnique({ where: { domain: session.shop } });
@@ -162,8 +164,21 @@ export const loader = async ({ request }) => {
     : null;
 
   if (!product) {
-    return html(pageHtml({ productTitle: null, reviews: [], page: 1, totalPages: 1, total: 0, q, base: url }));
+    return html(pageHtml({ productTitle: null, reviews: [], page: 1, totalPages: 1, total: 0, q, base: url, widgetCss: DEFAULT_WIDGET_CSS }));
   }
+
+  // Cached as the fully-built page (not just the review rows) since that's
+  // the whole cost of this route — see reviewCache.server.ts for why the
+  // cache key includes both `page` and `q`, and how a new/changed review
+  // clears every page+query combo for this product at once rather than
+  // trying to track which ones it actually affects.
+  const cachedHtml = await getCachedAllPage(shop.id, product.id, page, q);
+  if (cachedHtml) return html(cachedHtml);
+
+  // Same shape as apps.reviews.jsx's own theme-or-defaults fallback — a
+  // shop that's never customized its widget has no WidgetTheme row at all.
+  const theme = await db.widgetTheme.findUnique({ where: { shopId: shop.id } });
+  const widgetCss = [theme?.css ?? DEFAULT_WIDGET_CSS, compileStyleBlocks(theme?.styleBlocks)].filter(Boolean).join("\n\n");
 
   const where = {
     productId: product.id,
@@ -191,5 +206,7 @@ export const loader = async ({ request }) => {
     },
   });
 
-  return html(pageHtml({ productTitle: product.title ?? null, reviews, page: currentPage, totalPages, total, q, base: url }));
+  const rendered = pageHtml({ productTitle: product.title ?? null, reviews, page: currentPage, totalPages, total, q, base: url, widgetCss });
+  await setCachedAllPage(shop.id, product.id, page, q, rendered);
+  return html(rendered);
 };

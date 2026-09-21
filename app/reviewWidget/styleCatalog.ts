@@ -38,7 +38,14 @@ export const PROPERTIES = [
   { value: "width", label: "Width", hint: "e.g. 100%, 240px" },
   { value: "height", label: "Height", hint: "e.g. auto, 120px" },
   { value: "grid-template-columns", label: "Grid columns", hint: "e.g. repeat(2, 1fr)" },
+  { value: "grid-auto-flow", label: "Grid fill direction", hint: "row or column" },
   { value: "line-height", label: "Line height", hint: "e.g. 1.5" },
+  { value: "position", label: "Position mode", hint: "static (normal flow) or absolute (free position)" },
+  { value: "top", label: "Distance from top", hint: "e.g. 8px, -4px — only with absolute position" },
+  { value: "right", label: "Distance from right", hint: "e.g. 8px, -4px — only with absolute position" },
+  { value: "bottom", label: "Distance from bottom", hint: "e.g. 8px, -4px — only with absolute position" },
+  { value: "left", label: "Distance from left", hint: "e.g. 8px, -4px — only with absolute position" },
+  { value: "z-index", label: "Stack order", hint: "e.g. 1, 2 — higher sits on top" },
 ] as const;
 
 export type StyleBlock = { target: string; property: string; value: string };

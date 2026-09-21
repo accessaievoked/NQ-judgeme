@@ -1,5 +1,5 @@
 import type { BlockModule } from "../types";
-import { typographyControls, sizeControls, spacingControls, appearanceControls } from "../controls";
+import { typographyControls, sizeControls, spacingControls, appearanceControls, positionControls } from "../controls";
 
 // Free-form static text, unlike every other block here — those all resolve
 // from a review's {{token}} (stars/title/body/author/...), so their content
@@ -21,5 +21,6 @@ export const textBlock: BlockModule = {
     ...sizeControls(),
     ...spacingControls(),
     ...appearanceControls(),
+    ...positionControls(),
   ],
 };

@@ -58,6 +58,8 @@ import { compileStyleBlocks } from "../reviewWidget/styleCompiler";
 import { TARGETS, PROPERTIES, TARGET_ICONS } from "../reviewWidget/styleCatalog";
 import { BLOCK_TYPES, blockTypeFor } from "../reviewWidget/blockTypes";
 import { controlsForTarget, controlsForBlockType } from "../reviewWidget/sections/index";
+import { SIZE_UNITS, parseSizeValue, formatSizeValue, parseBoxValue, formatBoxValue } from "../reviewWidget/sections/controls";
+import { invalidateShopReviewCache } from "../reviewWidget/reviewCache.server";
 
 // Two sample reviews, both rendered in the preview (renderWidgetHtml maps
 // the same <!--ITEM--> template over every review, so editing the one
@@ -118,6 +120,7 @@ export const action = async ({ request }) => {
 
   if (intent === "reset") {
     await db.widgetTheme.deleteMany({ where: { shopId: shop.id } });
+    await invalidateShopReviewCache(shop.id);
     return { ok: true, intent, html: DEFAULT_WIDGET_HTML, css: DEFAULT_WIDGET_CSS, styleBlocks: [], isCustom: false };
   }
 
@@ -136,6 +139,7 @@ export const action = async ({ request }) => {
     create: { shopId: shop.id, html, css, styleBlocks },
     update: { html, css, styleBlocks },
   });
+  await invalidateShopReviewCache(shop.id);
 
   return { ok: true, intent: "save-editor", html: theme.html, css: theme.css, styleBlocks: theme.styleBlocks, isCustom: true };
 };
@@ -195,6 +199,65 @@ const EDITOR_SCRIPT = `
     badge.style.display = 'block';
   }
 
+  // "Free position" blocks (position: absolute, set via the Placement
+  // control) can be dragged directly here instead of only typing Top/Left —
+  // only when the mousedown target IS the already-selected element (never a
+  // hover/click-to-select), so dragging never fights with picking something
+  // new. A real drag (moved more than a couple px) suppresses the click
+  // handler's own selection logic below, since mouseup always fires a click
+  // right after — otherwise every drag would immediately re-trigger a
+  // select/deselect on release.
+  var dragState = null;
+  var suppressClick = false;
+
+  document.addEventListener('mousedown', function (e) {
+    var res = resolveTarget(e.target);
+    if (!res || res.el !== selectedEl) return;
+    if (window.getComputedStyle(res.el).position !== 'absolute') return;
+    e.preventDefault();
+    var cs = window.getComputedStyle(res.el);
+    dragState = {
+      el: res.el,
+      blockId: res.blockId,
+      styleTarget: res.styleTarget,
+      startX: e.clientX,
+      startY: e.clientY,
+      startTop: parseFloat(cs.top) || res.el.offsetTop,
+      startLeft: parseFloat(cs.left) || res.el.offsetLeft,
+      moved: false,
+    };
+  }, true);
+
+  document.addEventListener('mousemove', function (e) {
+    if (!dragState) return;
+    var dx = e.clientX - dragState.startX;
+    var dy = e.clientY - dragState.startY;
+    if (!dragState.moved && Math.abs(dx) < 3 && Math.abs(dy) < 3) return;
+    dragState.moved = true;
+    var newTop = Math.round(dragState.startTop + dy);
+    var newLeft = Math.round(dragState.startLeft + dx);
+    dragState.el.style.top = newTop + 'px';
+    dragState.el.style.left = newLeft + 'px';
+    dragState.el.style.right = 'auto';
+    dragState.el.style.bottom = 'auto';
+    place(selectedBadge, dragState.el, selectedBadge.textContent);
+  });
+
+  document.addEventListener('mouseup', function () {
+    if (!dragState) return;
+    if (dragState.moved) {
+      suppressClick = true;
+      parent.postMessage({
+        type: 'jm-drag-end',
+        blockId: dragState.blockId,
+        styleTarget: dragState.styleTarget,
+        top: dragState.el.style.top,
+        left: dragState.el.style.left,
+      }, '*');
+    }
+    dragState = null;
+  });
+
   function selectorForTarget(styleTarget) {
     for (var i = 0; i < TARGETS.length; i++) {
       if (TARGETS[i].value === styleTarget) return TARGETS[i].selector;
@@ -225,6 +288,7 @@ const EDITOR_SCRIPT = `
 
   document.addEventListener('click', function (e) {
     e.preventDefault();
+    if (suppressClick) { suppressClick = false; return; }
     var res = resolveTarget(e.target);
     if (selectedEl) selectedEl.classList.remove('jm-editor-selected');
     if (!res) {
@@ -681,13 +745,16 @@ function Sidebar({ tree, selected, onSelectBlock, onSelectFixed, onAddInside, on
 // them is first-party and exhaustively battle-tested — so every editable
 // field in this editor uses one, styled via .jm-field in EDITOR_CHROME_CSS
 // to still look consistent with the surrounding Polaris chrome.
-function Field({ label, value, placeholder, onChange, hideLabel }) {
+function Field({ label, value, placeholder, onChange, hideLabel, type = "text", min, max, step }) {
   return (
     <label className="jm-field">
       {!hideLabel ? <span className="jm-field__label">{label}</span> : null}
       <input
         className="jm-field__input"
-        type="text"
+        type={type}
+        min={min}
+        max={max}
+        step={step}
         value={value ?? ""}
         placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
@@ -715,11 +782,45 @@ function NativeSelect({ label, value, options, onChange, hideLabel }) {
   );
 }
 
+// A plain number input plus a px/%/rem/em dropdown beside it, combined into
+// one CSS value ("12px") — the building block for both the "size" control
+// (one field) and the "box" control (four of these, one per side). No unit
+// ever has to be typed by hand.
+function SizeField({ label, hideLabel, value, placeholder, units, onChange }) {
+  const { num, unit } = parseSizeValue(value);
+  return (
+    <div className="jm-size-field">
+      {!hideLabel ? <span className="jm-field__label">{label}</span> : null}
+      <div className="jm-size-field__row">
+        <input
+          className="jm-field__input jm-size-field__number"
+          type="number"
+          step="any"
+          value={num}
+          placeholder={placeholder || "0"}
+          onChange={(e) => onChange(formatSizeValue(e.target.value, unit))}
+          aria-label={label}
+        />
+        <select
+          className="jm-field__input jm-size-field__unit"
+          value={unit}
+          onChange={(e) => onChange(formatSizeValue(num === "" ? "0" : num, e.target.value))}
+          aria-label={`${label} unit`}
+        >
+          {(units || SIZE_UNITS).map((u) => (
+            <option key={u} value={u}>{u}</option>
+          ))}
+        </select>
+      </div>
+    </div>
+  );
+}
+
 function SettingsGroup({ heading, children }) {
   return (
     <div className="jm-settings-group">
       <s-text tone="subdued">{heading}</s-text>
-      <s-stack direction="block" gap="tight" style={{ marginTop: 8 }}>
+      <s-stack direction="block" gap="base" style={{ marginTop: 10 }}>
         {children}
       </s-stack>
     </div>
@@ -760,6 +861,63 @@ function ControlField({ control, getVal, setVal, content, onEditContent }) {
     setVal(control.property, v, control.target);
     control.onSet?.(v, (property, val, target) => setVal(property, val, target ?? control.target));
   };
+
+  if (control.type === "size") {
+    return (
+      <div>
+        <SizeField label={control.label} value={value} placeholder={control.placeholder} units={control.units} onChange={onChange} />
+        <HelpText text={control.helpText} />
+      </div>
+    );
+  }
+
+  if (control.type === "box") {
+    const sides = parseBoxValue(value);
+    const sideLabels = ["Top", "Right", "Bottom", "Left"];
+    const setSide = (i, sideValue) => {
+      const next = [...sides];
+      next[i] = sideValue;
+      onChange(formatBoxValue(next));
+    };
+    return (
+      <div>
+        <span className="jm-field__label">{control.label}</span>
+        <div className="jm-box-grid">
+          {sideLabels.map((label, i) => (
+            <SizeField key={label} label={label} value={sides[i]} units={control.units} onChange={(v) => setSide(i, v)} />
+          ))}
+        </div>
+        <HelpText text={control.helpText} />
+      </div>
+    );
+  }
+
+  if (control.type === "number") {
+    // The stored CSS value and the number this field displays can differ
+    // (e.g. "repeat(3, 1fr)" stored, "3" shown) — fromValue/toValue convert
+    // between them; controls that don't need that just leave them unset.
+    const displayValue = control.fromValue ? control.fromValue(value) : value;
+    const onNumberChange = (raw) => {
+      const stored = control.toValue ? control.toValue(raw) : raw;
+      setVal(control.property, stored, control.target);
+      control.onSet?.(stored, (property, val, target) => setVal(property, val, target ?? control.target));
+    };
+    return (
+      <div>
+        <Field
+          label={control.label}
+          type="number"
+          min={control.min}
+          max={control.max}
+          step={control.step}
+          value={displayValue}
+          placeholder={control.placeholder}
+          onChange={onNumberChange}
+        />
+        <HelpText text={control.helpText} />
+      </div>
+    );
+  }
 
   if (control.type === "select") {
     // Never pre-select one of the real options as a fallback for "nothing
@@ -978,7 +1136,7 @@ const EDITOR_CHROME_CSS = `
   .jm-tree-row { padding: 3px 0; border-radius: 6px; }
   .jm-tree-row.is-drop-target { background: #eef1fd; outline: 2px dashed #5c6ac4; outline-offset: -2px; }
   .jm-drag-handle { cursor: grab; color: #999; font-size: 14px; }
-  .jm-settings-group { padding: 10px 12px; background: #fafafb; border: 1px solid #ececec; border-radius: 8px; }
+  .jm-settings-group { padding: 12px 14px; background: #fafafb; border: 1px solid #ececec; border-radius: 8px; }
   .jm-field { display: block; }
   .jm-field__label { display: block; font-size: 12px; color: #4a4a4a; margin-bottom: 3px; }
   .jm-field__input {
@@ -987,6 +1145,14 @@ const EDITOR_CHROME_CSS = `
   }
   .jm-field__input:focus { outline: 2px solid #5c6ac4; outline-offset: -1px; border-color: #5c6ac4; }
   select.jm-field__input { cursor: pointer; }
+  .jm-size-field { display: block; }
+  .jm-size-field__row { display: flex; gap: 8px; }
+  .jm-size-field__number { flex: 1 1 auto; min-width: 0; }
+  .jm-size-field__unit { flex: 0 0 68px; }
+  .jm-box-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px;
+    padding: 10px; margin-top: 4px; background: #fff; border: 1px solid #ececec; border-radius: 6px;
+  }
   .jm-diagnostic { margin-top: 10px; padding: 8px 10px; background: #fff4e4; border: 1px solid #ffcf8a; border-radius: 6px; font-size: 12px; color: #6b4900; }
   .jm-diagnostic code { background: rgba(0,0,0,0.08); padding: 1px 4px; border-radius: 3px; }
   .jm-palette-item {
@@ -1014,6 +1180,7 @@ export default function WidgetEditor() {
   const [paletteTarget, setPaletteTarget] = useState(null); // containerId to add into, or null when closed
   const [previewMode, setPreviewMode] = useState("withReviews"); // or "empty" — see EMPTY_PREVIEW_DATA
   const [previewHeight, setPreviewHeight] = useState(360);
+  const [previewDevice, setPreviewDevice] = useState("desktop"); // or "mobile" — just narrows the iframe itself, no separate render path, so it's exactly what a shopper's phone would see given the same html/css.
   const [dragState, setDragState] = useState({ draggingId: null, overId: null }); // sidebar tree drag-and-drop
 
   const targetsForIframe = useMemo(() => TARGETS.map((t) => ({ value: t.value, selector: t.selector })), []);
@@ -1076,6 +1243,29 @@ export default function WidgetEditor() {
         setSelected({ styleTarget: msg.styleTarget, blockId: msg.blockId, blockType: msg.blockType });
       } else if (msg.type === "jm-resize" && typeof msg.height === "number") {
         setPreviewHeight(Math.min(900, Math.max(220, msg.height + 4)));
+      } else if (msg.type === "jm-drag-end") {
+        // Dragging a "Free position" block in the preview (EDITOR_SCRIPT's
+        // mousedown/mousemove/mouseup handling above) ends here — commit the
+        // pixel position it settled on into styleBlocks, same shape the Top/
+        // Left fields in the settings panel write, so either one keeps
+        // working after using the other.
+        const target = msg.blockId || msg.styleTarget;
+        if (!target) return;
+        const writes = [
+          ["top", msg.top],
+          ["left", msg.left],
+          ["right", "auto"],
+          ["bottom", "auto"],
+        ];
+        setStyleBlocks((all) => {
+          let next = all;
+          for (const [property, value] of writes) {
+            const idx = next.findIndex((b) => b.target === target && b.property === property);
+            if (idx === -1) next = [...next, { target, property, value }];
+            else next = next.map((b, i) => (i === idx ? { ...b, value } : b));
+          }
+          return next;
+        });
       }
     }
     window.addEventListener("message", onMessage);
@@ -1233,15 +1423,37 @@ export default function WidgetEditor() {
 
         <div style={{ flex: "1 1 34%", minWidth: 280 }}>
           <s-section heading="Preview (hover, then click to select)">
-            <s-stack direction="inline" gap="tight" style={{ marginBottom: 8 }}>
+            <s-stack direction="inline" gap="tight" style={{ marginBottom: 8, flexWrap: "wrap" }}>
               <s-button variant={previewMode === "withReviews" ? "primary" : "tertiary"} onClick={() => switchPreviewMode("withReviews")}>
                 With reviews
               </s-button>
               <s-button variant={previewMode === "empty" ? "primary" : "tertiary"} onClick={() => switchPreviewMode("empty")}>
                 No reviews yet
               </s-button>
+              <span style={{ width: 1, alignSelf: "stretch", background: "#e1e1e1" }} />
+              <s-button variant={previewDevice === "desktop" ? "primary" : "tertiary"} onClick={() => setPreviewDevice("desktop")}>
+                🖥 Desktop
+              </s-button>
+              <s-button variant={previewDevice === "mobile" ? "primary" : "tertiary"} onClick={() => setPreviewDevice("mobile")}>
+                📱 Mobile
+              </s-button>
             </s-stack>
-            <div style={{ border: "1px solid #ddd", borderRadius: 8, overflow: "hidden" }}>
+            {/* Mobile mode just narrows the iframe itself (a real 390px
+                viewport, same html/css/media queries a phone gets) rather
+                than rendering a second copy of the preview — so it's an
+                honest look at what a shopper's phone would actually show,
+                not an approximation. */}
+            <div
+              style={{
+                border: "1px solid #ddd",
+                borderRadius: 8,
+                overflow: "hidden",
+                width: previewDevice === "mobile" ? 390 : "100%",
+                maxWidth: "100%",
+                margin: previewDevice === "mobile" ? "0 auto" : undefined,
+                transition: "width 150ms ease",
+              }}
+            >
               <iframe
                 ref={iframeRef}
                 title="Widget preview"

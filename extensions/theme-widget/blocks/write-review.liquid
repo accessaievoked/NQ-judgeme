@@ -1,24 +1,12 @@
 {% comment %}
-  App block a merchant adds to their product template via Theme Editor.
-  Renders a container the widget.js script fills in client-side by calling
-  the app proxy (/apps/reviews) — no server-side Liquid->app call needed.
-
-  Box-model settings below (width/max-width/padding/margin/min-height/
-  background/corner radius) are per-instance, set right here in the Theme
-  Editor — separate from the shop-wide look-and-feel (colors, fonts, layout
-  of the reviews themselves) which stays in /app/widget-editor. They're
-  applied as an inline style on this wrapper div, which survives
-  jm-widget.js swapping the *contents* in via container.innerHTML.
-
-  Themes that stack section blocks in a flex/grid layout (e.g. Horizon's
-  `.section-content-wrapper` flex column, confirmed via devtools) size each
-  block to its own content by default (`align-items: flex-start`) — so a
-  percentage width on our own div has nothing real to be a percentage OF.
-  Shopify always wraps an app block in a div with a predictable id,
-  `shopify-block-{{ block.id }}` — forcing ITS width here (a real CSS rule,
-  not inline on a node we don't render) makes our own 100%/max-width actually
-  mean something, since an explicit width on a flex/grid item always wins
-  over the container's default alignment-driven sizing.
+  "Write a review" app block — a merchant adds this anywhere (typically the
+  product page) to let a shopper submit a review directly from the
+  storefront, with no email link needed (that's still the /r/:token flow —
+  this is the second, direct path). Same box-model settings pattern as
+  product-reviews.liquid (see that file's header comment for the full
+  reasoning behind the {% style %} block below); the form's own
+  look-and-feel is customizable in /app/widget-editor under "Write a review"
+  and its sub-pieces.
 {% endcomment %}
 {% style %}
   #shopify-block-{{ block.id }} {
@@ -44,13 +32,11 @@
   endif
 -%}
 <div
-  class="jm-reviews"
-  data-jm-reviews
+  data-jm-write-review
   data-product-id="{{ product.id }}"
   style="
     width: {{ block.settings.width }}%;
     max-width: {{ jm_max_width_css }};
-    min-height: {{ block.settings.min_height }}px;
     margin: {{ jm_margin_x }};
     margin-top: {{ block.settings.margin_top }}px;
     margin-bottom: {{ block.settings.margin_bottom }}px;
@@ -62,20 +48,14 @@
     box-sizing: border-box;
   "
 >
-  <p class="jm-reviews__loading">Loading reviews…</p>
+  <p class="jm-reviews__loading">Loading form…</p>
 </div>
 
-{% comment %}
-  The reviews' own look-and-feel (colors, fonts, star style, layout of the
-  list/cards) comes from the shop's WidgetTheme (customizable in
-  /app/widget-editor), injected as a <style> tag by jm-widget.js itself —
-  no static stylesheet here.
-{% endcomment %}
-<script src="{{ 'jm-widget.js' | asset_url }}" defer></script>
+<script src="{{ 'jm-write-review.js' | asset_url }}" defer></script>
 
 {% schema %}
 {
-  "name": "Product reviews",
+  "name": "Write a review",
   "target": "section",
   "settings": [
     {
@@ -100,7 +80,7 @@
       "max": 2000,
       "step": 20,
       "unit": "px",
-      "default": 1200,
+      "default": 600,
       "info": "Drag all the way right for no cap (full available width)"
     },
     {
@@ -117,23 +97,13 @@
     },
     {
       "type": "range",
-      "id": "min_height",
-      "label": "Minimum height",
-      "min": 0,
-      "max": 800,
-      "step": 20,
-      "unit": "px",
-      "default": 0
-    },
-    {
-      "type": "range",
       "id": "padding",
       "label": "Padding",
       "min": 0,
       "max": 100,
       "step": 4,
       "unit": "px",
-      "default": 16
+      "default": 0
     },
     {
       "type": "range",

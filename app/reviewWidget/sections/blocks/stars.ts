@@ -1,5 +1,5 @@
 import type { BlockModule } from "../types";
-import { sizeControls, spacingControls, appearanceControls } from "../controls";
+import { sizeControls, spacingControls, appearanceControls, positionControls } from "../controls";
 
 export const starsBlock: BlockModule = {
   type: "stars",
@@ -10,10 +10,11 @@ export const starsBlock: BlockModule = {
   css: `.jm-reviews__item-stars { color: #f5a623; font-size: 14px; }`,
   controls: [
     { key: "color", label: "Star color", type: "color", property: "color", group: "Typography" },
-    { key: "fontSize", label: "Star size", type: "text", property: "font-size", group: "Typography", placeholder: "e.g. 14px" },
-    { key: "letterSpacing", label: "Spacing between stars", type: "text", property: "letter-spacing", group: "Typography", placeholder: "e.g. 1px" },
+    { key: "fontSize", label: "Star size", type: "size", property: "font-size", group: "Typography", placeholder: "e.g. 14" },
+    { key: "letterSpacing", label: "Spacing between stars", type: "size", property: "letter-spacing", group: "Typography", placeholder: "e.g. 1" },
     ...sizeControls(),
     ...spacingControls(),
     ...appearanceControls(),
+    ...positionControls(),
   ],
 };

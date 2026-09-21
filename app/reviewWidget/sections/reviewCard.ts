@@ -20,11 +20,14 @@ export const reviewCardSection: SectionModule = {
   ${bodyBlock.html("item-body")}
   ${authorBlock.html("item-author")}
 </div>`,
-  // position: relative so any block added inside (now or later given a
-  // manual `position: absolute` via the Advanced section) is positioned
+  // position: relative so any block added inside — in normal flow or given
+  // "Free position" (see controls.ts's positionControls) — is positioned
   // relative to the card itself, not the whole page — it stays contained
-  // inside the card instead of escaping it.
-  css: `.jm-reviews__item { position: relative; border: 1px solid #eee; border-radius: 8px; padding: 16px; }`,
+  // inside the card instead of escaping it. display: flex column + a gap
+  // is the default stack layout (same idea as containerBlock's own
+  // default below) so a fresh card's stars/title/body/author never touch —
+  // each block's own small built-in margin used to be the only spacing.
+  css: `.jm-reviews__item { position: relative; display: flex; flex-direction: column; gap: 8px; border: 1px solid #eee; border-radius: 8px; padding: 16px; }`,
   controls: [...flexLayoutControls(), ...sizeControls(), ...spacingControls(), ...appearanceControls()],
 };
 

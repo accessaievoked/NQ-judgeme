@@ -12,6 +12,7 @@ import db from "../db.server";
 import { DEFAULT_WIDGET_HTML, DEFAULT_WIDGET_CSS } from "../reviewWidget/defaults.server";
 import { renderWidgetHtml } from "../reviewWidget/render.server";
 import { compileStyleBlocks } from "../reviewWidget/styleBlocks.server";
+import { invalidateShopReviewCache } from "../reviewWidget/reviewCache.server";
 
 const PREVIEW_DATA = {
   count: 2,
@@ -59,6 +60,7 @@ export const action = async ({ request }) => {
 
   if (intent === "reset") {
     await db.widgetTheme.deleteMany({ where: { shopId: shop.id } });
+    await invalidateShopReviewCache(shop.id);
     return { ok: true, intent, ...withPreview(buildState(null)) };
   }
 
@@ -70,6 +72,7 @@ export const action = async ({ request }) => {
     create: { shopId: shop.id, html, css },
     update: { html, css },
   });
+  await invalidateShopReviewCache(shop.id);
 
   return { ok: true, intent: "save", ...withPreview(buildState(theme)) };
 };

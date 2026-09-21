@@ -19,7 +19,7 @@
 // app.widget-editor.jsx's getBlockContent/setBlockContent). Only the
 // "text" block type (sections/blocks/text.ts) uses it, since every other
 // block's content comes from a review-data {{token}}, not free text.
-export type ControlType = "text" | "color" | "select" | "image" | "content";
+export type ControlType = "text" | "color" | "select" | "image" | "content" | "number" | "size" | "box";
 
 export type ControlOption = { value: string; label: string };
 
@@ -52,6 +52,21 @@ export type SectionControl = {
   /** Extra style-block writes to make right after this control's own value
    * is set — e.g. picking a flex direction also turns on `display: flex`. */
   onSet?: (value: string, setVal: (property: string, value: string, target?: string) => void) => void;
+  /** type "number" only: the raw number the input shows is converted through
+   * this before being stored as the CSS value (e.g. 3 -> "repeat(3, 1fr)"
+   * for grid columns). Defaults to the identity (store the raw number). */
+  toValue?: (raw: string) => string;
+  /** type "number" only: the reverse of toValue, extracting the number the
+   * input should display back out of the stored CSS value. Defaults to the
+   * identity. */
+  fromValue?: (stored: string) => string;
+  /** type "number" only: native <input type="number"> min/max/step. */
+  min?: number;
+  max?: number;
+  step?: number;
+  /** type "size"/"box" only: which units the side dropdown offers. Defaults
+   * to SIZE_UNITS (px/%/rem/em) from controls.ts. */
+  units?: string[];
 };
 
 // A fixed, always-present piece of the widget (summary bar, quick-rate box,

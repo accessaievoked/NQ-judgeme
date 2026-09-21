@@ -17,6 +17,13 @@ import { emptyStateSection } from "./emptyState";
 import { reviewCardSection, reviewCardChildTargets } from "./reviewCard";
 import { reviewsListSection, moreLinkHtml, moreLinkCss } from "./reviewsList";
 import { BLOCK_MODULES, blockModuleFor, BLOCKS_DEFAULT_CSS, avatarInitialsTarget } from "./blocks";
+import {
+  writeFormSection,
+  writeFormHeadingSection,
+  writeFormStarsSection,
+  writeFormInputSection,
+  writeFormSubmitSection,
+} from "./writeForm";
 
 // Render order for both the composed default template (HTML) and the
 // composed default stylesheet (CSS) below. The inline quick-rate box used
@@ -32,6 +39,11 @@ export const SECTIONS: SectionModule[] = [
   ...reviewCardChildTargets,
   avatarInitialsTarget,
   reviewsListSection,
+  writeFormSection,
+  writeFormHeadingSection,
+  writeFormStarsSection,
+  writeFormInputSection,
+  writeFormSubmitSection,
 ];
 
 export function sectionFor(target: string) {

@@ -19,6 +19,7 @@ import db from "../db.server";
 import { DEFAULT_WIDGET_HTML, DEFAULT_WIDGET_CSS } from "../reviewWidget/defaults.server";
 import { renderWidgetHtml } from "../reviewWidget/render.server";
 import { compileStyleBlocks } from "../reviewWidget/styleBlocks.server";
+import { getCachedWidget, setCachedWidget, invalidateReviewCache } from "../reviewWidget/reviewCache.server";
 
 async function themeFor(shopId) {
   if (!shopId) return { html: DEFAULT_WIDGET_HTML, css: DEFAULT_WIDGET_CSS, styleBlocks: null };
@@ -31,9 +32,13 @@ async function themeFor(shopId) {
 // the full, paginated /apps/reviews/all page (see that route).
 const INLINE_REVIEW_LIMIT = 4;
 
-function respond(theme, data) {
+function buildPayload(theme, data) {
   const css = [theme.css, compileStyleBlocks(theme.styleBlocks)].filter(Boolean).join("\n\n");
-  return Response.json({ html: renderWidgetHtml(theme.html, data), css });
+  return { html: renderWidgetHtml(theme.html, data), css };
+}
+
+function respond(theme, data) {
+  return Response.json(buildPayload(theme, data));
 }
 
 const EMPTY_DATA = { count: 0, average: null, reviews: [] };
@@ -49,12 +54,21 @@ export const loader = async ({ request }) => {
   const shop = await db.shop.findUnique({ where: { domain: session.shop } });
   if (!shop) return respond(await themeFor(null), EMPTY_DATA);
 
-  const theme = await themeFor(shop.id);
-
   const product = await db.product.findUnique({
     where: { shopId_shopifyId: { shopId: shop.id, shopifyId: `gid://shopify/Product/${productId}` } },
   });
-  if (!product) return respond(theme, EMPTY_DATA);
+  if (!product) return respond(await themeFor(shop.id), EMPTY_DATA);
+
+  // Cache key covers shop + product only — theme edits already invalidate
+  // implicitly next TTL cycle (5 min, see reviewCache.server.ts), and a
+  // merchant tweaking styling isn't the hot path this cache is for. A new
+  // review or a moderation status change DOES need to show up right away,
+  // so those explicitly invalidate (see this route's action, r.$token.jsx,
+  // apps.reviews.write.jsx, and app.reviews.jsx's admin status change).
+  const cached = await getCachedWidget(shop.id, product.id);
+  if (cached) return Response.json(cached);
+
+  const theme = await themeFor(shop.id);
 
   const reviews = await db.review.findMany({
     where: { productId: product.id, status: "PUBLISHED" },
@@ -73,12 +87,14 @@ export const loader = async ({ request }) => {
   const average = reviews.length ? reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length : null;
   const moreUrl = reviews.length > INLINE_REVIEW_LIMIT ? `/apps/reviews/all?productId=${encodeURIComponent(productId)}` : null;
 
-  return respond(theme, {
+  const payload = buildPayload(theme, {
     count: reviews.length,
     average,
     reviews: reviews.slice(0, INLINE_REVIEW_LIMIT),
     moreUrl,
   });
+  await setCachedWidget(shop.id, product.id, payload);
+  return Response.json(payload);
 };
 
 export const action = async ({ request }) => {
@@ -126,6 +142,11 @@ export const action = async ({ request }) => {
       status: autoPublish ? "PUBLISHED" : "PENDING",
     },
   });
+
+  // Only matters if it actually landed PUBLISHED — a PENDING review isn't in
+  // the cached published list yet, so there's nothing stale to clear until
+  // an admin publishes it later (see app.reviews.jsx's status-change action).
+  if (autoPublish) await invalidateReviewCache(shop.id, product.id);
 
   return Response.json({ ok: true, published: autoPublish });
 };

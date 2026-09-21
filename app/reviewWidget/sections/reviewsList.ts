@@ -22,25 +22,68 @@ export const reviewsListSection: SectionModule = {
       property: "display",
       group: "Reviews layout",
       options: [
-        { value: "flex", label: "Stacked (one per row)" },
+        { value: "flex", label: "Flex" },
         { value: "grid", label: "Grid" },
       ],
-      onSet: (value, setVal) => setVal("flex-direction", value === "flex" ? "column" : ""),
+      // Switching layout mode resets the other mode's own direction so
+      // stale flex-direction/grid-auto-flow values from before don't leak
+      // into the newly-chosen mode's rendering.
+      onSet: (value, setVal) => {
+        setVal("flex-direction", value === "flex" ? "column" : "");
+        setVal("grid-auto-flow", "");
+        if (value !== "grid") setVal("grid-template-columns", "");
+      },
     },
     {
-      key: "columns",
-      label: "Columns",
+      key: "flexDirection",
+      label: "Direction",
       type: "select",
-      property: "grid-template-columns",
+      property: "flex-direction",
       group: "Reviews layout",
       options: [
-        { value: "repeat(2, 1fr)", label: "2 per row" },
-        { value: "repeat(3, 1fr)", label: "3 per row" },
-        { value: "repeat(4, 1fr)", label: "4 per row" },
+        { value: "column", label: "Vertical (one review per row)" },
+        { value: "row", label: "Horizontal (reviews side by side)" },
+      ],
+      showIf: (getVal) => getVal("display") === "flex",
+    },
+    {
+      key: "gridDirection",
+      label: "Direction",
+      type: "select",
+      property: "grid-auto-flow",
+      group: "Reviews layout",
+      options: [
+        { value: "row", label: "Fill across, then down" },
+        { value: "column", label: "Fill down, then across" },
       ],
       showIf: (getVal) => getVal("display") === "grid",
     },
-    { key: "gap", label: "Gap between cards", type: "text", property: "gap", group: "Reviews layout", placeholder: "e.g. 16px" },
+    {
+      key: "columns",
+      label: "Columns per row",
+      type: "number",
+      property: "grid-template-columns",
+      group: "Reviews layout",
+      min: 1,
+      max: 8,
+      step: 1,
+      showIf: (getVal) => getVal("display") === "grid",
+      toValue: (raw) => `repeat(${Math.max(1, Number(raw) || 1)}, 1fr)`,
+      fromValue: (stored) => stored.match(/repeat\((\d+)/)?.[1] || "3",
+    },
+    {
+      key: "wrap",
+      label: "Wrap onto new lines",
+      type: "select",
+      property: "flex-wrap",
+      group: "Reviews layout",
+      options: [
+        { value: "wrap", label: "Yes" },
+        { value: "nowrap", label: "No — scroll/overflow instead" },
+      ],
+      showIf: (getVal) => getVal("display") === "flex" && getVal("flex-direction") === "row",
+    },
+    { key: "gap", label: "Gap between cards", type: "size", property: "gap", group: "Reviews layout", placeholder: "e.g. 16" },
     ...sizeControls(),
     ...spacingControls(),
     ...appearanceControls(),
