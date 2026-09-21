@@ -9,6 +9,7 @@
 //
 //   <!--ITEM--> ... {{stars}} {{title}} {{body}} {{author}} {{avatar}} {{verified}} ... <!--/ITEM-->
 //   <!--EMPTY--> ... <!--/EMPTY-->
+//   <!--MORE--> ... {{moreUrl}} {{moreCount}} ... <!--/MORE-->
 //
 // Everything outside those marker blocks may use {{averageStars}},
 // {{averageValue}}, {{count}}, {{reviewWord}}, and {{rateWidget}} — the
@@ -16,6 +17,11 @@
 // like the rest (jm-widget.js hooks it up by fixed class names), but it can
 // be placed anywhere in the template, including inside <!--EMPTY-->, so a
 // shopper can rate a product with zero reviews without leaving the page.
+//
+// <!--MORE--> renders only when the caller passed fewer `reviews` than the
+// real `count` (apps.reviews.jsx only sends the first page's worth inline)
+// and set `moreUrl` — the link to the full, paginated /apps/reviews/all
+// page. {{moreCount}} is how many aren't shown inline.
 
 export type WidgetReview = {
   rating: number;
@@ -30,6 +36,7 @@ export type WidgetData = {
   count: number;
   average: number | null;
   reviews: WidgetReview[];
+  moreUrl?: string | null;
 };
 
 function escapeHtml(str: string): string {
@@ -115,13 +122,26 @@ export function renderWidgetHtml(template: string, data: WidgetData): string {
   let out = empty.withoutMarkers(data.count === 0, empty.content);
 
   const item = extractBlock(out, "ITEM");
+  // Wrapped regardless of what's saved in `template` — a merchant's raw
+  // HTML never has to know about this div — so the whole list's layout
+  // (stacked vs. a grid of columns) is stylable via the "list" style-block
+  // target (styleCatalog.ts TARGETS) independently of any one card's style.
+  // A plain block-display wrapper is a no-op for the default stacked look,
+  // so this doesn't change existing storefronts until a merchant styles it.
   const itemsHtml = data.reviews.map((r) => renderItem(item.content, r)).join("");
-  out = item.withoutMarkers(data.count > 0, itemsHtml);
+  const wrappedItemsHtml = `<div class="jm-reviews__list" data-jm-block="list" data-jm-block-type="list">${itemsHtml}</div>`;
+  out = item.withoutMarkers(data.count > 0, wrappedItemsHtml);
+
+  const moreCount = data.count - data.reviews.length;
+  const more = extractBlock(out, "MORE");
+  out = more.withoutMarkers(moreCount > 0 && Boolean(data.moreUrl), more.content);
 
   return out
     .replaceAll("{{averageStars}}", starsMarkup(data.average ?? 0))
     .replaceAll("{{averageValue}}", data.average != null ? data.average.toFixed(1) : "0.0")
     .replaceAll("{{count}}", String(data.count))
     .replaceAll("{{reviewWord}}", data.count === 1 ? "review" : "reviews")
+    .replaceAll("{{moreUrl}}", data.moreUrl ? escapeHtml(data.moreUrl) : "#")
+    .replaceAll("{{moreCount}}", String(Math.max(moreCount, 0)))
     .replaceAll("{{rateWidget}}", RATE_WIDGET_HTML);
 }

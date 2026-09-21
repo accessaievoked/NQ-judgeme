@@ -26,6 +26,11 @@ async function themeFor(shopId) {
   return theme ?? { html: DEFAULT_WIDGET_HTML, css: DEFAULT_WIDGET_CSS, styleBlocks: null };
 }
 
+// Only the first page's worth of reviews render inline in the widget; the
+// rest are reachable via the {{moreUrl}} <!--MORE--> block, which links to
+// the full, paginated /apps/reviews/all page (see that route).
+const INLINE_REVIEW_LIMIT = 4;
+
 function respond(theme, data) {
   const css = [theme.css, compileStyleBlocks(theme.styleBlocks)].filter(Boolean).join("\n\n");
   return Response.json({ html: renderWidgetHtml(theme.html, data), css });
@@ -66,8 +71,14 @@ export const loader = async ({ request }) => {
   });
 
   const average = reviews.length ? reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length : null;
+  const moreUrl = reviews.length > INLINE_REVIEW_LIMIT ? `/apps/reviews/all?productId=${encodeURIComponent(productId)}` : null;
 
-  return respond(theme, { count: reviews.length, average, reviews });
+  return respond(theme, {
+    count: reviews.length,
+    average,
+    reviews: reviews.slice(0, INLINE_REVIEW_LIMIT),
+    moreUrl,
+  });
 };
 
 export const action = async ({ request }) => {
