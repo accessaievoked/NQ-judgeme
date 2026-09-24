@@ -19,6 +19,10 @@ function widgetKey(shopId: string, productId: string): string {
   return `${NAMESPACE}:widget:${shopId}:${productId}`;
 }
 
+function summaryKey(shopId: string, productId: string): string {
+  return `${NAMESPACE}:summary:${shopId}:${productId}`;
+}
+
 // Search query is part of the key (not just the page number) since a
 // query changes which rows land on "page 2" entirely.
 function allPageKey(shopId: string, productId: string, page: number, q: string): string {
@@ -47,6 +51,25 @@ export async function setCachedWidget(shopId: string, productId: string, data: C
   await redis.set(widgetKey(shopId, productId), JSON.stringify(data), "EX", TTL_SECONDS);
 }
 
+export type CachedSummary = { html: string; css: string };
+
+// Same shape/TTL as the inline widget cache above, keyed separately since a
+// storefront can embed the summary badge on pages (collections, cart) that
+// never fetch the full widget, and vice versa.
+export async function getCachedSummary(shopId: string, productId: string): Promise<CachedSummary | null> {
+  const raw = await redis.get(summaryKey(shopId, productId));
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+export async function setCachedSummary(shopId: string, productId: string, data: CachedSummary): Promise<void> {
+  await redis.set(summaryKey(shopId, productId), JSON.stringify(data), "EX", TTL_SECONDS);
+}
+
 export async function getCachedAllPage(shopId: string, productId: string, page: number, q: string): Promise<string | null> {
   return redis.get(allPageKey(shopId, productId, page, q));
 }
@@ -63,7 +86,11 @@ export async function setCachedAllPage(shopId: string, productId: string, page: 
 // switching to SCAN before it saw production traffic at real volume.
 export async function invalidateReviewCache(shopId: string, productId: string): Promise<void> {
   const pattern = allPagePattern(shopId, productId);
-  const [pageKeys] = await Promise.all([redis.keys(pattern), redis.del(widgetKey(shopId, productId))]);
+  const [pageKeys] = await Promise.all([
+    redis.keys(pattern),
+    redis.del(widgetKey(shopId, productId)),
+    redis.del(summaryKey(shopId, productId)),
+  ]);
   if (pageKeys.length) await redis.del(...pageKeys);
 }
 

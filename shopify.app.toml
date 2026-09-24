@@ -2,7 +2,7 @@
 
 client_id = "aa49199f89941741bcd238f1efbde10a"
 name = "judgeme-demo-app"
-application_url = "https://overturn-dutiful-cabbage.ngrok-free.dev"
+application_url = "https://localhost"
 embedded = true
 
 [access_scopes]
@@ -52,12 +52,12 @@ topics = ["orders/fulfilled"]
 uri = "/webhooks/orders/fulfilled"
 
 [app_proxy]
-url = "https://overturn-dutiful-cabbage.ngrok-free.dev/apps/reviews"
+url = "https://localhost/apps/reviews"
 subpath = "reviews"
 prefix = "apps"
 
 [auth]
-redirect_urls = [ "https://overturn-dutiful-cabbage.ngrok-free.dev/api/auth" ]
+redirect_urls = [ "https://localhost/api/auth" ]
 
 [build]
 automatically_update_urls_on_dev = true

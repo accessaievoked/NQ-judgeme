@@ -1,14 +1,20 @@
 // app/routes/apps.reviews.all.jsx — Shopify app proxy target
-// (/apps/reviews/all on the storefront domain). Reached via the widget's
-// {{moreUrl}} "Show all N reviews" link (see reviewWidget/renderTemplate.ts)
-// once a product has more than apps.reviews.jsx's INLINE_REVIEW_LIMIT.
+// (/apps/reviews/all on the storefront domain). Reached two ways: (1) the
+// widget's {{moreUrl}} "Show all N reviews" link (see
+// reviewWidget/renderTemplate.ts) once a product has more than
+// apps.reviews.jsx's INLINE_REVIEW_LIMIT — a full page navigation, `?fragment`
+// absent; (2) the "All reviews" theme block
+// (extensions/theme-widget/blocks/all-reviews.liquid +
+// assets/jm-reviews-all.js), embedded directly on a themed page — fetched
+// with `?fragment=1`, same fragment convention as apps.reviews.write.jsx,
+// so pagination/search happen via fetch instead of leaving the themed page.
 //
-// Unlike apps.reviews.jsx (which returns { html, css } JSON for the
-// storefront script to inject), this route returns a complete, self-styled
-// HTML document — it's meant to be navigated to directly, not fetched. It
-// reuses the shop's widget CSS classes (jm-reviews__item-*) so an item here
-// looks like an item in the inline widget, and adds its own page chrome
-// (search box, numbered pagination) on top.
+// Either way this reuses the shop's widget CSS classes (jm-reviews__item-*)
+// so an item here looks like an item in the inline widget, and adds its own
+// page chrome (search box, numbered pagination) on top. `buildInner` is
+// the one thing cached — the DB-derived, page-specific content — and is
+// shared by both the full-document and fragment response shapes below,
+// which are otherwise both cheap to (re)compute from it on every request.
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
 import { DEFAULT_WIDGET_CSS } from "../reviewWidget/defaults.server";
@@ -99,15 +105,10 @@ function reviewItemHtml(review) {
   </div>`;
 }
 
-function pageHtml({ productTitle, reviews, page, totalPages, total, q, base, widgetCss }) {
-  return `<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Reviews${productTitle ? ` — ${escapeHtml(productTitle)}` : ""}</title>
-<style>
-  body { margin: 0; padding: 24px 16px 48px; font-family: -apple-system, system-ui, sans-serif; color: #1a1a1a; background: #fff; }
+// Chrome CSS only — page-specific styling shared by both the fragment
+// response (jm-reviews-all.js injects it alongside the fragment) and the
+// full-document response (pageHtml below wraps it into <head>).
+const PAGE_CHROME_CSS = `
   .jm-reviews-page { max-width: 720px; margin: 0 auto; }
   .jm-reviews-page__heading { font-size: 22px; font-weight: 700; margin: 0 0 4px; }
   .jm-reviews-page__count { color: #666; margin: 0 0 20px; }
@@ -124,21 +125,41 @@ function pageHtml({ productTitle, reviews, page, totalPages, total, q, base, wid
   .jm-reviews-page__num:hover, .jm-reviews-page__nav:hover { background: #f4f4f4; }
   .jm-reviews-page__num.is-current { background: #1a1a1a; color: #fff; }
   .jm-reviews-page__ellipsis { padding: 0 4px; color: #999; }
-  ${widgetCss}
-</style>
-</head>
-<body>
-<div class="jm-reviews-page jm-reviews">
+`;
+
+// The DB-derived, page-specific markup — this is the one thing cached (see
+// getCachedAllPage/setCachedAllPage below), reused as-is by both the
+// fragment response (embedded theme block) and the full-document response
+// (direct-link/no-JS fallback).
+function buildInner({ productTitle, reviews, page, totalPages, total, q, base }) {
+  return `<div class="jm-reviews-page jm-reviews">
   <h1 class="jm-reviews-page__heading">Reviews${productTitle ? ` — ${escapeHtml(productTitle)}` : ""}</h1>
   <p class="jm-reviews-page__count">${total} ${total === 1 ? "review" : "reviews"}${q ? ` matching “${escapeHtml(q)}”` : ""}</p>
-  <form class="jm-reviews-page__search" method="get">
+  <form class="jm-reviews-page__search" method="get" data-jm-reviews-all-search>
     <input type="hidden" name="productId" value="${escapeHtml(base.searchParams.get("productId") || "")}">
     <input type="search" name="q" value="${escapeHtml(q || "")}" placeholder="Search reviews...">
     <button type="submit">Search</button>
   </form>
   ${reviews.length ? reviews.map(reviewItemHtml).join("") : `<p class="jm-reviews-page__empty">No reviews found.</p>`}
   ${paginationHtml(base, page, totalPages)}
-</div>
+</div>`;
+}
+
+function pageHtml({ productTitle, inner, widgetCss }) {
+  return `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reviews${productTitle ? ` — ${escapeHtml(productTitle)}` : ""}</title>
+<style>
+  body { margin: 0; padding: 24px 16px 48px; font-family: -apple-system, system-ui, sans-serif; color: #1a1a1a; background: #fff; }
+  ${PAGE_CHROME_CSS}
+  ${widgetCss}
+</style>
+</head>
+<body>
+${inner}
 </body>
 </html>`;
 }
@@ -149,12 +170,18 @@ export const loader = async ({ request }) => {
   const productId = url.searchParams.get("productId");
   const q = (url.searchParams.get("q") || "").trim().slice(0, 200);
   const page = Math.max(1, parseInt(url.searchParams.get("page") || "1", 10) || 1);
+  const fragment = url.searchParams.get("fragment") === "1";
 
-  const html = (body) => new Response(body, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+  const respond = (inner, widgetCss, productTitle) => {
+    const body = fragment
+      ? `<style>${PAGE_CHROME_CSS}\n${widgetCss}</style>${inner}`
+      : pageHtml({ productTitle, inner, widgetCss });
+    return new Response(body, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+  };
 
-  if (!session || !productId) {
-    return html(pageHtml({ productTitle: null, reviews: [], page: 1, totalPages: 1, total: 0, q, base: url, widgetCss: DEFAULT_WIDGET_CSS }));
-  }
+  const empty = () => respond(buildInner({ productTitle: null, reviews: [], page: 1, totalPages: 1, total: 0, q, base: url }), DEFAULT_WIDGET_CSS, null);
+
+  if (!session || !productId) return empty();
 
   const shop = await db.shop.findUnique({ where: { domain: session.shop } });
   const product = shop
@@ -163,22 +190,23 @@ export const loader = async ({ request }) => {
       })
     : null;
 
-  if (!product) {
-    return html(pageHtml({ productTitle: null, reviews: [], page: 1, totalPages: 1, total: 0, q, base: url, widgetCss: DEFAULT_WIDGET_CSS }));
-  }
-
-  // Cached as the fully-built page (not just the review rows) since that's
-  // the whole cost of this route — see reviewCache.server.ts for why the
-  // cache key includes both `page` and `q`, and how a new/changed review
-  // clears every page+query combo for this product at once rather than
-  // trying to track which ones it actually affects.
-  const cachedHtml = await getCachedAllPage(shop.id, product.id, page, q);
-  if (cachedHtml) return html(cachedHtml);
+  if (!product) return empty();
 
   // Same shape as apps.reviews.jsx's own theme-or-defaults fallback — a
   // shop that's never customized its widget has no WidgetTheme row at all.
+  // Fetched unconditionally (even on an `inner` cache hit below) since both
+  // the fragment and full-document response shapes need it fresh, unlike
+  // the old single-shape cache this route used to have.
   const theme = await db.widgetTheme.findUnique({ where: { shopId: shop.id } });
   const widgetCss = [theme?.css ?? DEFAULT_WIDGET_CSS, compileStyleBlocks(theme?.styleBlocks)].filter(Boolean).join("\n\n");
+
+  // Cached as the built inner markup (page-specific, DB-derived) — see
+  // reviewCache.server.ts for why the cache key includes both `page` and
+  // `q`, and how a new/changed review clears every page+query combo for
+  // this product at once rather than trying to track which ones it
+  // actually affects.
+  const cachedInner = await getCachedAllPage(shop.id, product.id, page, q);
+  if (cachedInner) return respond(cachedInner, widgetCss, product.title ?? null);
 
   const where = {
     productId: product.id,
@@ -206,7 +234,7 @@ export const loader = async ({ request }) => {
     },
   });
 
-  const rendered = pageHtml({ productTitle: product.title ?? null, reviews, page: currentPage, totalPages, total, q, base: url, widgetCss });
-  await setCachedAllPage(shop.id, product.id, page, q, rendered);
-  return html(rendered);
+  const inner = buildInner({ productTitle: product.title ?? null, reviews, page: currentPage, totalPages, total, q, base: url });
+  await setCachedAllPage(shop.id, product.id, page, q, inner);
+  return respond(inner, widgetCss, product.title ?? null);
 };

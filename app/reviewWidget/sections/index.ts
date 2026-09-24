@@ -15,15 +15,15 @@ import { rootSection } from "./root";
 import { summarySection, summaryStarsSection, summaryCountSection } from "./summary";
 import { emptyStateSection } from "./emptyState";
 import { reviewCardSection, reviewCardChildTargets } from "./reviewCard";
-import { reviewsListSection, moreLinkHtml, moreLinkCss } from "./reviewsList";
+import { reviewsListSection } from "./reviewsList";
+import { moreLinkSection, moreLinkHtml } from "./moreLink";
 import { BLOCK_MODULES, blockModuleFor, BLOCKS_DEFAULT_CSS, avatarInitialsTarget } from "./blocks";
-import {
-  writeFormSection,
-  writeFormHeadingSection,
-  writeFormStarsSection,
-  writeFormInputSection,
-  writeFormSubmitSection,
-} from "./writeForm";
+// Note: writeForm.ts (the "write a review" form page's sections) is
+// deliberately NOT wired in here — that template has its own dedicated
+// builder now (routes/app.review-form-editor.jsx) with its own storage
+// (ReviewFormTheme) and its own style compiler
+// (reviewWidget/reviewFormStyleCompiler.ts), entirely separate from this
+// registry and the WidgetTheme-backed reviews-*list* widget it feeds.
 
 // Render order for both the composed default template (HTML) and the
 // composed default stylesheet (CSS) below. The inline quick-rate box used
@@ -39,11 +39,7 @@ export const SECTIONS: SectionModule[] = [
   ...reviewCardChildTargets,
   avatarInitialsTarget,
   reviewsListSection,
-  writeFormSection,
-  writeFormHeadingSection,
-  writeFormStarsSection,
-  writeFormInputSection,
-  writeFormSubmitSection,
+  moreLinkSection,
 ];
 
 export function sectionFor(target: string) {
@@ -93,7 +89,7 @@ export const DEFAULT_WIDGET_CSS = [
   reviewCardSection.css,
   BLOCKS_DEFAULT_CSS,
   emptyStateSection.css,
-  moreLinkCss,
+  moreLinkSection.css,
 ]
   .filter(Boolean)
   .join("\n");

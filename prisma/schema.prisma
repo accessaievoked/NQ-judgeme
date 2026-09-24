@@ -61,18 +61,21 @@ model Shop {
   createdAt         DateTime   @default(now())
   updatedAt         DateTime   @updatedAt
 
-  settings        ShopSettings?
-  widgetTheme     WidgetTheme?
-  products        Product[]
-  variants        Variant[]
-  customers       Customer[]
-  orders          Order[]
-  orderLineItems  OrderLineItem[]
-  reviewRequests  ReviewRequest[]
-  reviews         Review[]
-  scheduleRules   ScheduleRule[]
-  emailTemplates  EmailTemplate[]
-  reviewDiscounts ReviewDiscount[]
+  settings           ShopSettings?
+  widgetTheme        WidgetTheme?
+  reviewFormTheme    ReviewFormTheme?
+  ratingSummaryTheme RatingSummaryTheme?
+  emailLayouts       EmailLayout[]
+  products           Product[]
+  variants           Variant[]
+  customers          Customer[]
+  orders             Order[]
+  orderLineItems     OrderLineItem[]
+  reviewRequests     ReviewRequest[]
+  reviews            Review[]
+  scheduleRules      ScheduleRule[]
+  emailTemplates     EmailTemplate[]
+  reviewDiscounts    ReviewDiscount[]
 }
 
 // Single global row. The web process gets the live tunnel URL injected by
@@ -105,6 +108,15 @@ model ShopSettings {
   reviewDiscountEnabled    Boolean  @default(false)
   reviewDiscountPercentage Int      @default(10)
   reviewDiscountExpiryDays Int      @default(30)
+  // Where the widget's "Show more"/{{moreUrl}} link points once a product
+  // has more reviews than fit inline (see apps.reviews.jsx's
+  // INLINE_REVIEW_LIMIT). Null = the built-in bare app-proxy page,
+  // /apps/reviews/all?productId=... (no theme header/footer). Set this to a
+  // real themed Shopify Page's path (e.g. "/pages/reviews", created from the
+  // "All reviews" theme block — extensions/theme-widget/blocks/all-reviews.liquid)
+  // to link there instead; apps.reviews.jsx appends "?productId=<id>" (or
+  // "&productId=..." if the path already has a query string) automatically.
+  allReviewsPageUrl        String?
   createdAt                DateTime @default(now())
   updatedAt                DateTime @updatedAt
 }
@@ -128,6 +140,92 @@ model WidgetTheme {
   styleBlocks Json?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+}
+
+// The "write a review" page/fragment's markup+styling
+// (routes/apps.reviews.write.jsx + the write-review theme block), per shop —
+// same pattern as WidgetTheme but for that page instead of the read-only
+// reviews list. No row = use the hardcoded defaults in
+// reviewWidget/reviewFormTemplate.ts. `html` supports the
+// {{productTitle}}/{{productTitleSuffix}}/{{productTitleHeadingSuffix}}
+// tokens and an optional <!--IMAGE-->...<!--/IMAGE--> block (see that file
+// for the full list); `css` is injected as-is, same as WidgetTheme.css.
+// `styleBlocks` reuses the exact same {target, property, value} shape/
+// compiler as WidgetTheme (reviewWidget/styleBlocks.server.ts) — targets are
+// the "writeForm*" entries in reviewWidget/sections/writeForm.ts. Edited from
+// its own dedicated builder (/app/review-form-editor) — never from
+// app.widget-editor/app.widget-style, which only ever touch WidgetTheme (the
+// read-only list widget).
+model ReviewFormTheme {
+  id          String   @id @default(cuid())
+  shopId      String   @unique
+  shop        Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  html        String
+  css         String
+  styleBlocks Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// The storefront "star rating + review count" summary badge, per shop — a
+// much lighter sibling of WidgetTheme/ReviewFormTheme: no free-form block
+// canvas, just a handful of structured controls (colors, size, alignment,
+// whether the count text shows at all) plus an optional raw HTML/CSS escape
+// hatch, same "blocks" vs "html" mode split as EmailTemplate.mode. No row =
+// the hardcoded defaults in reviewWidget/ratingSummaryTemplate.ts. In "html"
+// mode, `html`/`css` are used as-is (tokens: {{averageStars}} {{averageValue}}
+// {{count}} {{reviewWord}}); in "blocks" mode they're regenerated from the
+// structured fields on every save so the two modes never drift apart, and the
+// storefront renderer always just uses whatever's in `html`/`css` regardless
+// of mode.
+model RatingSummaryTheme {
+  id             String   @id @default(cuid())
+  shopId         String   @unique
+  shop           Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  mode           String   @default("blocks")
+  starColor      String   @default("#f5a623")
+  emptyStarColor String   @default("#d9d9d9")
+  textColor      String   @default("#6b6b6b")
+  fontSize       Int      @default(14)
+  align          String   @default("left")
+  showCount      Boolean  @default(true)
+  countText      String   @default("({{count}} {{reviewWord}})")
+  html           String
+  css            String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Email layouts (absolute-position visual builder)
+// ---------------------------------------------------------------------------
+
+// One row per trigger type, per shop — the visual-builder counterpart to
+// EmailTemplate. A vendor designs with free-position elements (text/image/
+// button blocks with x/y/width/height/style, like the widget editor's block
+// canvas) and this stores that design as `elements` (Json array of
+// EmailElement — see email/emailLayoutCompiler.ts); `mode: "html"` switches
+// to a raw HTML/CSS override (`rawHtml`) instead, same split as
+// RatingSummaryTheme.mode/EmailTemplate.mode. Actually sending an email never
+// reads this table directly — resolveTemplate (templates.server.ts) checks
+// here first (compiling `elements`/`rawHtml` to table-based, email-client-safe
+// HTML via emailLayoutCompiler.ts) and falls back to EmailTemplate, then the
+// hardcoded default, exactly like the existing fallback chain.
+model EmailLayout {
+  id          String   @id @default(cuid())
+  shopId      String
+  shop        Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  triggerType String
+  mode        String   @default("canvas")
+  subject     String
+  elements    Json
+  rawHtml     String   @default("")
+  canvasWidth Int      @default(480)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([shopId, triggerType])
+  @@index([shopId])
 }
 
 // Editable wording per trigger type. subject/bodyHtml support {{tokens}}

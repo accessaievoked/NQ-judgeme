@@ -11,7 +11,11 @@ export const rootSection: SectionModule = {
   icon: "⬚",
   selector: ".jm-reviews",
   html: null,
-  css: `.jm-reviews { font-family: inherit; max-width: 640px; }`,
+  // position: relative so anything given "Free position" placement at the
+  // top level of the widget (e.g. the Show more button — see moreLink.ts)
+  // has a real positioned ancestor to be placed relative to, same reasoning
+  // as styleCompiler.ts's STRUCTURAL_CSS for review cards.
+  css: `.jm-reviews { font-family: inherit; max-width: 640px; position: relative; }`,
   controls: [
     {
       key: "align",

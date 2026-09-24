@@ -1,0 +1,150 @@
+{% comment %}
+  "Rating summary" app block — a compact star-rating + review-count badge, a
+  much lighter alternative to the full "Product reviews" block for spots
+  like collection grids, cart drawers, or a product header where a merchant
+  just wants the number at a glance. Same box-model settings pattern as
+  product-reviews.liquid/write-review.liquid (see that file's header comment
+  for the full reasoning behind the {% style %} block below); the badge's
+  own look-and-feel (colors, size, alignment, whether the count text shows)
+  is customizable in /app/rating-summary-editor.
+{% endcomment %}
+{% style %}
+  #shopify-block-{{ block.id }} {
+    display: block;
+    width: 100%;
+    max-width: none;
+  }
+{% endstyle %}
+{%- liquid
+  assign jm_align = block.settings.alignment
+  assign jm_margin_x = "0"
+  if jm_align == "left"
+    assign jm_margin_x = "0 auto 0 0"
+  elsif jm_align == "right"
+    assign jm_margin_x = "0 0 0 auto"
+  else
+    assign jm_margin_x = "0 auto"
+  endif
+
+  assign jm_max_width_css = block.settings.max_width | append: "px"
+  if block.settings.max_width >= 2000
+    assign jm_max_width_css = "none"
+  endif
+-%}
+<div
+  data-jm-rating-summary-root
+  data-product-id="{{ product.id }}"
+  style="
+    width: {{ block.settings.width }}%;
+    max-width: {{ jm_max_width_css }};
+    margin: {{ jm_margin_x }};
+    margin-top: {{ block.settings.margin_top }}px;
+    margin-bottom: {{ block.settings.margin_bottom }}px;
+    padding: {{ block.settings.padding }}px;
+    border-radius: {{ block.settings.border_radius }}px;
+    {%- if block.settings.background_color != blank %}
+    background-color: {{ block.settings.background_color }};
+    {%- endif %}
+    box-sizing: border-box;
+  "
+>
+  <p class="jm-reviews__loading">Loading…</p>
+</div>
+
+<script src="{{ 'jm-rating-summary.js' | asset_url }}" defer></script>
+
+{% schema %}
+{
+  "name": "Rating summary",
+  "target": "section",
+  "settings": [
+    {
+      "type": "header",
+      "content": "Size & spacing"
+    },
+    {
+      "type": "range",
+      "id": "width",
+      "label": "Width",
+      "min": 20,
+      "max": 100,
+      "step": 5,
+      "unit": "%",
+      "default": 100
+    },
+    {
+      "type": "range",
+      "id": "max_width",
+      "label": "Max width",
+      "min": 120,
+      "max": 2000,
+      "step": 20,
+      "unit": "px",
+      "default": 300,
+      "info": "Drag all the way right for no cap (full available width)"
+    },
+    {
+      "type": "select",
+      "id": "alignment",
+      "label": "Alignment",
+      "options": [
+        { "value": "left", "label": "Left" },
+        { "value": "center", "label": "Center" },
+        { "value": "right", "label": "Right" }
+      ],
+      "default": "left",
+      "info": "Only visible when width or max width leaves extra room"
+    },
+    {
+      "type": "range",
+      "id": "padding",
+      "label": "Padding",
+      "min": 0,
+      "max": 100,
+      "step": 4,
+      "unit": "px",
+      "default": 0
+    },
+    {
+      "type": "range",
+      "id": "margin_top",
+      "label": "Top spacing",
+      "min": 0,
+      "max": 150,
+      "step": 5,
+      "unit": "px",
+      "default": 0
+    },
+    {
+      "type": "range",
+      "id": "margin_bottom",
+      "label": "Bottom spacing",
+      "min": 0,
+      "max": 150,
+      "step": 5,
+      "unit": "px",
+      "default": 0
+    },
+    {
+      "type": "header",
+      "content": "Background"
+    },
+    {
+      "type": "color",
+      "id": "background_color",
+      "label": "Background color",
+      "default": "#00000000"
+    },
+    {
+      "type": "range",
+      "id": "border_radius",
+      "label": "Corner rounding",
+      "min": 0,
+      "max": 40,
+      "step": 2,
+      "unit": "px",
+      "default": 0
+    }
+  ]
+}
+{% endschema %}

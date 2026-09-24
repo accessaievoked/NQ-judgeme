@@ -3,16 +3,14 @@ import { sizeControls, spacingControls, appearanceControls, typographyControls, 
 
 // The public, no-token "write a review" page (routes/apps.reviews.write.jsx)
 // and its matching theme block (extensions/theme-widget/blocks/write-review.liquid)
-// — unlike the read-only reviews list, this isn't rendered inside
-// app.widget-editor's click-to-select iframe (that iframe only knows the
-// <!--ITEM-->/list template), so these targets are only reachable from the
-// sidebar's fixed "Widget" list, not by clicking a live preview. They still
-// go through the exact same pipeline as everything else, though: these
-// controls write ordinary {target, property, value} rows into the shop's
-// WidgetTheme.styleBlocks, compiled by the same compileStyleBlocks() and
-// rendered into the write-review page's own <style> tag — one system, one
-// place merchants go to restyle anything, just without a live click-preview
-// for this particular page yet.
+// — edited from its own dedicated builder (routes/app.review-form-editor.jsx),
+// not app.widget-editor (that page's click-to-select iframe only knows the
+// read-only list's <!--ITEM--> template, and its sidebar explicitly excludes
+// these targets — see its WRITE_FORM_TARGET_VALUES). These controls still
+// write the same {target, property, value} row shape as everything else in
+// reviewWidget/, compiled by the same compileStyleBlocks() — just persisted
+// on ReviewFormTheme.styleBlocks instead of WidgetTheme.styleBlocks, and
+// rendered into the write-review page's own <style> tag.
 export const writeFormSection: SectionModule = {
   target: "writeForm",
   label: "Write a review (form page)",
@@ -32,7 +30,7 @@ export const writeFormSection: SectionModule = {
     ...appearanceControls(),
     ...positionControls(),
     { key: "headingColor", label: "Heading color", type: "color", property: "color", target: "writeForm-heading", group: "Shortcuts" },
-    { key: "starColor", label: "Star color (selected)", type: "color", property: "color", target: "writeForm-stars", group: "Shortcuts" },
+    { key: "starColor", label: "Star color (filled)", type: "color", property: "color", target: "writeForm-stars-filled", group: "Shortcuts" },
     { key: "submitBg", label: "Submit button color", type: "color", property: "background", target: "writeForm-submit", group: "Shortcuts" },
   ],
 };
@@ -47,18 +45,39 @@ export const writeFormHeadingSection: SectionModule = {
   controls: [...typographyControls(), ...spacingControls()],
 };
 
+// The star picker's two "faces" — empty and filled — are separate targets
+// with their own selectors (`.jm-write-review__star` vs the more specific
+// `.jm-write-review__star.is-selected`), same "fill color" / "empty color"
+// split the rating-summary badge uses (RatingSummaryTheme.starColor/
+// emptyStarColor). Keeping them as two distinct {target, property} rows
+// (rather than both writing "color" on the same target, which is what this
+// used to do — the filled-star shortcut below and this section's own color
+// control silently overwrote each other, and even when set, the shortcut's
+// lower-specificity selector always lost to `.is-selected` in the cascade)
+// means a merchant can set both, either, or neither, independently, and
+// what's saved for one can never clobber the other.
 export const writeFormStarsSection: SectionModule = {
   target: "writeForm-stars",
-  label: "Write-a-review star picker",
-  icon: "★",
+  label: "Write-a-review star picker (empty)",
+  icon: "☆",
   selector: ".jm-write-review__star",
   html: null,
   css: `.jm-write-review__star { font-size: 32px; cursor: pointer; color: #ddd; background: none; border: 0; padding: 0; line-height: 1; }
 .jm-write-review__star.is-selected { color: #f5a623; }`,
   controls: [
     { key: "size", label: "Star size", type: "size", property: "font-size", group: "Typography" },
-    { key: "unselectedColor", label: "Unselected star color", type: "color", property: "color", group: "Typography" },
+    { key: "unselectedColor", label: "Empty star color", type: "color", property: "color", group: "Typography" },
   ],
+};
+
+export const writeFormStarsFilledSection: SectionModule = {
+  target: "writeForm-stars-filled",
+  label: "Write-a-review star picker (filled)",
+  icon: "★",
+  selector: ".jm-write-review__star.is-selected",
+  html: null,
+  css: "",
+  controls: [{ key: "filledColor", label: "Filled star color", type: "color", property: "color", group: "Typography" }],
 };
 
 export const writeFormInputSection: SectionModule = {
@@ -96,6 +115,7 @@ export const WRITE_FORM_DEFAULT_CSS = [
   writeFormSection.css,
   writeFormHeadingSection.css,
   writeFormStarsSection.css,
+  writeFormStarsFilledSection.css,
   writeFormInputSection.css,
   writeFormSubmitSection.css,
 ]

@@ -60,14 +60,42 @@
   }
 
   function loadReviews(container, productId) {
-    fetch("/apps/reviews?productId=" + encodeURIComponent(productId))
-      .then(function (res) { return res.json(); })
+    var url = "/apps/reviews?productId=" + encodeURIComponent(productId);
+    console.log("[jm-widget] fetching", url);
+    fetch(url)
+      .then(function (res) {
+        // Log status/content-type unconditionally (not just on failure) so
+        // a "reviews just don't show up" report always has something to go
+        // on — cheap, and console.log calls are no-ops in production
+        // performance terms. Read the body as text first (not res.json()
+        // directly) so a non-2xx / non-JSON response (an HTML error page,
+        // a store password wall, a 404 from a misconfigured app proxy —
+        // see this asset's own debugging history) shows its actual content
+        // instead of just "Unexpected end of JSON input".
+        console.log(res)
+        console.log("[jm-widget] response status", res.status, res.headers.get("content-type"));
+        return res.text().then(function (text) {
+          if (!res.ok) {
+            console.error("[jm-widget] non-OK response body (first 500 chars):", text.slice(0, 500));
+            throw new Error("Request failed with status " + res.status);
+          }
+          try {
+            return JSON.parse(text);
+          } catch (parseError) {
+            console.error("[jm-widget] response wasn't valid JSON (first 500 chars):", text.slice(0, 500));
+            throw parseError;
+          }
+        });
+      })
       .then(function (data) {
+        console.log(data)
+        console.log("[jm-widget] loaded", data.html ? data.html.length + " chars of html" : "(no html)");
         injectCss(data.css || "");
         container.innerHTML = data.html || "";
         wireRateWidget(container, productId);
       })
       .catch(function (error) {
+        console.log(error)
         console.error("Error fetching reviews", error);
         container.innerHTML = '<p class="jm-reviews__empty">Reviews unavailable.</p>';
       });

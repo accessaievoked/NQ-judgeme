@@ -7,28 +7,20 @@
 // (extensions/theme-widget/assets/jm-write-review.js), same pattern
 // apps.reviews.jsx/jm-widget.js use for the read-only list.
 //
-// Styling: see reviewWidget/sections/writeForm.ts's header comment for why
-// this deliberately does NOT use the shop's saved WidgetTheme.css (that's
-// the review-*list* widget's raw-HTML coder mode, a different template, and
-// using it here would mean any shop that saved before this feature existed
-// gets a completely unstyled form). Customizations still go through the
-// exact same WidgetTheme.styleBlocks + compileStyleBlocks pipeline as
-// everything else — just layered on top of this page's own always-fresh
-// base CSS instead of on top of a potentially stale saved blob.
+// Markup/styling: per-shop, stored on ReviewFormTheme and edited from its
+// own dedicated builder (/app/review-form-editor) — NOT WidgetTheme (that's
+// the review-*list* widget's template, a different page entirely). No row =
+// the hardcoded defaults in reviewWidget/reviewFormTemplate.ts. `html` is
+// rendered through renderReviewFormHtml (token substitution); `css` plus
+// `styleBlocks` (compiled through the same compileStyleBlocks() everything
+// else uses) are layered on top, read fresh from the DB on every request so
+// they can never go stale the way a cached/frozen blob could.
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
-import { compileStyleBlocks } from "../reviewWidget/styleBlocks.server";
-import { WRITE_FORM_DEFAULT_CSS } from "../reviewWidget/sections/writeForm";
+import { compileReviewFormStyleBlocks } from "../reviewWidget/reviewFormStyleCompiler";
+import { DEFAULT_REVIEW_FORM_HTML, renderReviewFormHtml, escapeHtml } from "../reviewWidget/reviewFormTemplate";
+import { WRITE_FORM_DEFAULT_CSS as DEFAULT_REVIEW_FORM_CSS } from "../reviewWidget/sections/writeForm";
 import { invalidateReviewCache } from "../reviewWidget/reviewCache.server";
-
-function escapeHtml(str) {
-  return String(str ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
 
 // Wires up the star picker + fetch-based submit for the form fragment
 // below. Kept as one string so both response modes can use it: a full-page
@@ -84,45 +76,7 @@ const WIRE_SCRIPT = `
 })();
 `;
 
-function formHtml({ productTitle, productImageUrl }) {
-  return `<div class="jm-write-review jm-reviews">
-  <div data-jm-write-done hidden class="jm-write-review__done">
-    <h2>Thanks for your review!</h2>
-    <p>It's been submitted${productTitle ? ` for ${escapeHtml(productTitle)}` : ""}.</p>
-  </div>
-  <form data-jm-write-form>
-    <h1 class="jm-write-review__heading">How was${productTitle ? ` ${escapeHtml(productTitle)}` : " it"}?</h1>
-    ${productImageUrl ? `<img src="${escapeHtml(productImageUrl)}" alt="${escapeHtml(productTitle || "")}" style="width:96px;height:96px;object-fit:cover;border-radius:8px;margin-bottom:16px;">` : ""}
-    <p data-jm-write-error hidden class="jm-write-review__error"></p>
-    <div class="jm-write-review__field">
-      <span class="jm-write-review__label">Your rating</span>
-      <div class="jm-write-review__stars">
-        <input type="hidden" name="rating" data-jm-write-rating>
-        <button type="button" class="jm-write-review__star" data-value="1">★</button>
-        <button type="button" class="jm-write-review__star" data-value="2">★</button>
-        <button type="button" class="jm-write-review__star" data-value="3">★</button>
-        <button type="button" class="jm-write-review__star" data-value="4">★</button>
-        <button type="button" class="jm-write-review__star" data-value="5">★</button>
-      </div>
-    </div>
-    <label class="jm-write-review__field">
-      <span class="jm-write-review__label">Title (optional)</span>
-      <input class="jm-write-review__input" type="text" name="title" maxlength="200">
-    </label>
-    <label class="jm-write-review__field">
-      <span class="jm-write-review__label">Your review (optional)</span>
-      <textarea class="jm-write-review__textarea" name="body" rows="4" maxlength="5000"></textarea>
-    </label>
-    <label class="jm-write-review__field">
-      <span class="jm-write-review__label">Your name (optional)</span>
-      <input class="jm-write-review__input" type="text" name="authorName" maxlength="100">
-    </label>
-    <button type="submit" class="jm-write-review__submit">Submit review</button>
-  </form>
-</div>`;
-}
-
-function pageHtml({ productTitle, productImageUrl, css }) {
+function pageHtml({ productTitle, formHtml, css }) {
   return `<!doctype html>
 <html>
 <head>
@@ -135,7 +89,7 @@ function pageHtml({ productTitle, productImageUrl, css }) {
 </style>
 </head>
 <body>
-${formHtml({ productTitle, productImageUrl })}
+${formHtml}
 <script>${WIRE_SCRIPT}</script>
 </body>
 </html>`;
@@ -150,7 +104,14 @@ export const loader = async ({ request }) => {
   const notFound = () =>
     fragment
       ? new Response(`<p class="jm-write-review__error">This product can't be reviewed here.</p>`, { headers: { "Content-Type": "text/html; charset=utf-8" }, status: 404 })
-      : new Response(pageHtml({ productTitle: null, productImageUrl: null, css: WRITE_FORM_DEFAULT_CSS }), { headers: { "Content-Type": "text/html; charset=utf-8" }, status: 404 });
+      : new Response(
+          pageHtml({
+            productTitle: null,
+            formHtml: renderReviewFormHtml(DEFAULT_REVIEW_FORM_HTML, { productTitle: null, productImageUrl: null }),
+            css: DEFAULT_REVIEW_FORM_CSS,
+          }),
+          { headers: { "Content-Type": "text/html; charset=utf-8" }, status: 404 },
+        );
 
   if (!session || !productId) return notFound();
 
@@ -162,18 +123,20 @@ export const loader = async ({ request }) => {
     : null;
   if (!shop || !product) return notFound();
 
-  const theme = shop ? await db.widgetTheme.findUnique({ where: { shopId: shop.id } }) : null;
-  const css = [WRITE_FORM_DEFAULT_CSS, compileStyleBlocks(theme?.styleBlocks)].filter(Boolean).join("\n\n");
+  const theme = shop ? await db.reviewFormTheme.findUnique({ where: { shopId: shop.id } }) : null;
+  const htmlTemplate = theme?.html ?? DEFAULT_REVIEW_FORM_HTML;
+  const css = [theme?.css ?? DEFAULT_REVIEW_FORM_CSS, compileReviewFormStyleBlocks(theme?.styleBlocks)].filter(Boolean).join("\n\n");
+  const formHtml = renderReviewFormHtml(htmlTemplate, { productTitle: product.title, productImageUrl: product.imageUrl });
 
   if (fragment) {
     // A <style> tag (unlike <script>) applies its CSS fine even when set via
     // innerHTML, so the embedded theme-block path (jm-write-review.js) can
     // just inject this fragment as-is with no separate CSS-fetch step.
-    const html = `<style>${css}</style>${formHtml({ productTitle: product.title, productImageUrl: product.imageUrl })}`;
+    const html = `<style>${css}</style>${formHtml}`;
     return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
   }
 
-  return new Response(pageHtml({ productTitle: product.title, productImageUrl: product.imageUrl, css }), {
+  return new Response(pageHtml({ productTitle: product.title, formHtml, css }), {
     headers: { "Content-Type": "text/html; charset=utf-8" },
   });
 };

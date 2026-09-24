@@ -1,4 +1,5 @@
 import db from "../db.server";
+import { compileEmailLayoutHtml, type EmailElement } from "./emailLayoutCompiler";
 
 export interface TemplateTokens {
   customerName?: string;
@@ -85,13 +86,32 @@ function fillTokens(text: string, tokens: TemplateTokens): string {
     .replace(/\{\{\s*discountSection\s*\}\}/g, tokens.discountSection ?? "");
 }
 
-// Vendor's saved EmailTemplate wins; otherwise fall back to the built-in
-// default for that trigger, or the review-ask default for anything unknown.
+// Resolution order: a saved EmailLayout (the visual canvas builder) wins
+// first, then a saved EmailTemplate (the older rich-text/raw-HTML editor),
+// then the built-in default for that trigger, or the review-ask default for
+// anything unknown. A shop only ever has one or the other in practice (each
+// editor writes its own table), but checking EmailLayout first means
+// switching a trigger over to the canvas builder always takes effect
+// immediately without needing to also clear out any EmailTemplate row.
 export async function resolveTemplate(
   shopId: string,
   triggerType: string,
   tokens: TemplateTokens,
 ): Promise<{ subject: string; html: string }> {
+  const layout = await db.emailLayout.findUnique({
+    where: { shopId_triggerType: { shopId, triggerType } },
+  });
+  if (layout) {
+    const html =
+      layout.mode === "html"
+        ? layout.rawHtml
+        : compileEmailLayoutHtml(Array.isArray(layout.elements) ? (layout.elements as unknown as EmailElement[]) : [], layout.canvasWidth);
+    return {
+      subject: fillTokens(layout.subject, tokens),
+      html: fillTokens(html, tokens),
+    };
+  }
+
   const custom = await db.emailTemplate.findUnique({
     where: { shopId_triggerType: { shopId, triggerType } },
   });

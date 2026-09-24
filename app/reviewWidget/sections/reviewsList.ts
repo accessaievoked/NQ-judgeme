@@ -4,9 +4,9 @@ import { sizeControls, spacingControls, appearanceControls } from "./controls";
 // Wraps every rendered review card. renderTemplate.ts always adds this
 // wrapper around the <!--ITEM--> repeats at render time — it's never part
 // of the stored `html` — so this section contributes no static markup, only
-// its default CSS/controls (its own stacked-vs-grid layout controller) and
-// the "Show all N reviews" link's markup, which sections/index.ts wraps in
-// <!--MORE--> markers right after it in the composed template.
+// its default CSS/controls (its own stacked-vs-grid layout controller). The
+// "Show all N reviews" link now lives in its own module (moreLink.ts) with
+// its own selectable target.
 export const reviewsListSection: SectionModule = {
   target: "list",
   label: "Reviews list (all cards)",
@@ -89,7 +89,3 @@ export const reviewsListSection: SectionModule = {
     ...appearanceControls(),
   ],
 };
-
-export const moreLinkHtml = `<a class="jm-reviews__more" href="{{moreUrl}}">Show all {{count}} reviews →</a>`;
-export const moreLinkCss = `.jm-reviews__more { display: inline-block; margin-top: 12px; color: #1a1a1a; font-weight: 600; text-decoration: none; }
-.jm-reviews__more:hover { text-decoration: underline; }`;

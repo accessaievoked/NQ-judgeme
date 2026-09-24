@@ -86,6 +86,11 @@ const ITEM_RE = /<!--ITEM-->([\s\S]*?)<!--\/ITEM-->/;
 const ITEM_TARGET_VALUES = new Set(["item", "item-stars", "item-title", "item-body", "item-author"]);
 // "avatar-initials" isn't browsable on its own — it only exists so the
 // Avatar block's controls can write to it (see sections/blocks/avatar.ts).
+// The "write a review" form page has its own dedicated builder and storage
+// now (/app/review-form-editor, over ReviewFormTheme) — its sections were
+// pulled out of reviewWidget/sections/index.ts's SECTIONS list entirely
+// (see that file), so TARGETS here never contains them in the first place;
+// nothing to filter out.
 const WIDGET_TARGETS = TARGETS.filter((t) => !ITEM_TARGET_VALUES.has(t.value) && t.value !== "avatar-initials");
 
 function extractItemHtml(html) {

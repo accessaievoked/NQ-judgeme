@@ -37,9 +37,17 @@ export type WidgetData = {
   average: number | null;
   reviews: WidgetReview[];
   moreUrl?: string | null;
+  // The numeric Shopify product id (no gid:// prefix) — available as
+  // {{productId}} anywhere in the template (not just inside <!--MORE-->) so
+  // a merchant can build their own link to a custom "all reviews" page in
+  // raw HTML mode, e.g. href="/pages/reviews?productId={{productId}}",
+  // instead of relying on {{moreUrl}} (see apps.reviews.jsx's buildMoreUrl /
+  // app.settings.jsx's "All reviews page" setting for the built-in way to
+  // do the same thing without hand-editing the template).
+  productId?: string | null;
 };
 
-function escapeHtml(str: string): string {
+export function escapeHtml(str: string): string {
   return str
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -48,7 +56,7 @@ function escapeHtml(str: string): string {
     .replace(/'/g, "&#39;");
 }
 
-function starsMarkup(rating: number): string {
+export function starsMarkup(rating: number): string {
   const rounded = Math.round(rating);
   let s = "";
   for (let i = 1; i <= 5; i++) s += i <= rounded ? "★" : "☆";
@@ -143,5 +151,6 @@ export function renderWidgetHtml(template: string, data: WidgetData): string {
     .replaceAll("{{reviewWord}}", data.count === 1 ? "review" : "reviews")
     .replaceAll("{{moreUrl}}", data.moreUrl ? escapeHtml(data.moreUrl) : "#")
     .replaceAll("{{moreCount}}", String(Math.max(moreCount, 0)))
+    .replaceAll("{{productId}}", escapeHtml(data.productId ?? ""))
     .replaceAll("{{rateWidget}}", RATE_WIDGET_HTML);
 }

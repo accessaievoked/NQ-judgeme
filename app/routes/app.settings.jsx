@@ -6,6 +6,7 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
 import { enqueueShopSync } from "../queue.server";
+import { invalidateShopReviewCache } from "../reviewWidget/reviewCache.server";
 
 // Default rules seeded for a new shop. Add more trigger types here as more
 // webhooks get wired up (matching shopify.app.toml subscriptions).
@@ -91,6 +92,7 @@ export const loader = async ({ request }) => {
       reviewDiscountPercentage: shopSettings.reviewDiscountPercentage,
       reviewDiscountExpiryDays: shopSettings.reviewDiscountExpiryDays,
     },
+    allReviewsPageUrl: shopSettings.allReviewsPageUrl ?? "",
   };
 };
 
@@ -160,6 +162,24 @@ export const action = async ({ request }) => {
       update: { reviewDiscountEnabled, reviewDiscountPercentage, reviewDiscountExpiryDays },
     });
     return { ok: true, intent };
+  }
+
+  if (intent === "save-all-reviews-url") {
+    // Blank clears it back to the built-in bare app-proxy page
+    // (/apps/reviews/all) — see buildMoreUrl in apps.reviews.jsx.
+    const raw = String(formData.get("allReviewsPageUrl") || "").trim().slice(0, 500);
+    const allReviewsPageUrl = raw || null;
+
+    await db.shopSettings.upsert({
+      where: { shopId: shop.id },
+      create: { shopId: shop.id, allReviewsPageUrl },
+      update: { allReviewsPageUrl },
+    });
+    // The widget's cached payload embeds the computed moreUrl — without
+    // this, a shop wouldn't see the new link until the 5-minute cache TTL
+    // expired on its own (see reviewCache.server.ts).
+    await invalidateShopReviewCache(shop.id);
+    return { ok: true, intent, allReviewsPageUrl: allReviewsPageUrl ?? "" };
   }
 
   return { ok: false, error: "Unknown action" };
@@ -322,6 +342,45 @@ function ReminderSettingsSection({ reminderDays }) {
   );
 }
 
+function AllReviewsPageSection({ allReviewsPageUrl }) {
+  const fetcher = useFetcher();
+  const shopify = useAppBridge();
+
+  if (fetcher.data?.ok && fetcher.data.intent === "save-all-reviews-url") {
+    shopify.toast.show("All reviews page saved");
+  }
+
+  const url = fetcher.data?.ok && fetcher.data.intent === "save-all-reviews-url" ? fetcher.data.allReviewsPageUrl : allReviewsPageUrl;
+
+  return (
+    <s-section heading="All reviews page">
+      <s-paragraph>
+        Where the widget&apos;s <strong>Show more</strong> button (shown once a
+        product has more than 5 reviews) links to. Leave blank to use the
+        built-in page — works out of the box, but is a bare document without
+        your theme&apos;s header/footer. For a fully themed page instead, add
+        the <strong>All reviews</strong> block (Online Store → Themes →
+        Customize → a Page or the product template → Add block → All
+        reviews) to a Page, then paste that Page&apos;s path below (e.g.{" "}
+        <code>/pages/reviews</code>) — the product id is appended
+        automatically.
+      </s-paragraph>
+      <fetcher.Form method="POST">
+        <input type="hidden" name="intent" value="save-all-reviews-url" />
+        <s-stack direction="inline" gap="base">
+          <s-text-field
+            label="All reviews page path"
+            name="allReviewsPageUrl"
+            placeholder="/pages/reviews"
+            defaultValue={url}
+          ></s-text-field>
+          <s-button type="submit" variant="primary">Save</s-button>
+        </s-stack>
+      </fetcher.Form>
+    </s-section>
+  );
+}
+
 function DiscountSettingsSection({ discountSettings }) {
   const fetcher = useFetcher();
   const shopify = useAppBridge();
@@ -375,7 +434,7 @@ function DiscountSettingsSection({ discountSettings }) {
 }
 
 export default function Settings() {
-  const { rules, products, syncStatus, reviewSettings, reminderDays, discountSettings } = useLoaderData();
+  const { rules, products, syncStatus, reviewSettings, reminderDays, discountSettings, allReviewsPageUrl } = useLoaderData();
   const syncFetcher = useFetcher();
   const shopify = useAppBridge();
 
@@ -402,6 +461,8 @@ export default function Settings() {
       <ReminderSettingsSection reminderDays={reminderDays ?? []} />
 
       {discountSettings ? <DiscountSettingsSection discountSettings={discountSettings} /> : null}
+
+      <AllReviewsPageSection allReviewsPageUrl={allReviewsPageUrl ?? ""} />
 
       <s-section heading="Product management">
         <s-stack direction="inline" gap="base">

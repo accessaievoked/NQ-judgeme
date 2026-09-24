@@ -28,9 +28,27 @@ async function themeFor(shopId) {
 }
 
 // Only the first page's worth of reviews render inline in the widget; the
-// rest are reachable via the {{moreUrl}} <!--MORE--> block, which links to
-// the full, paginated /apps/reviews/all page (see that route).
-const INLINE_REVIEW_LIMIT = 4;
+// rest are reachable via the {{moreUrl}} <!--MORE--> block (the "Show more
+// button" section — see sections/moreLink.ts), which links to the full,
+// paginated /apps/reviews/all page (see that route). Mandatory, not
+// optional: renderWidgetHtml only ever omits the whole <!--MORE--> block
+// when moreUrl is unset (i.e. there genuinely aren't more reviews than fit
+// inline) — see render.server.ts's <!--MORE--> handling.
+const INLINE_REVIEW_LIMIT = 5;
+
+// A shop can point "Show more" at its own themed Shopify Page (built from
+// the "All reviews" block — extensions/theme-widget/blocks/all-reviews.liquid
+// — see app.settings.jsx's "All reviews page" section) instead of the
+// built-in bare app-proxy page. Either way the product still has to be
+// identified somehow: the built-in page reads productId from its own route
+// param already; a merchant's own Page has no such thing, so it's always
+// appended as a query param, joined with "&" if the configured URL already
+// has one (e.g. "/pages/reviews?ref=footer").
+function buildMoreUrl(allReviewsPageUrl, productId) {
+  const base = allReviewsPageUrl?.trim() || "/apps/reviews/all";
+  const sep = base.includes("?") ? "&" : "?";
+  return `${base}${sep}productId=${encodeURIComponent(productId)}`;
+}
 
 function buildPayload(theme, data) {
   const css = [theme.css, compileStyleBlocks(theme.styleBlocks)].filter(Boolean).join("\n\n");
@@ -68,7 +86,10 @@ export const loader = async ({ request }) => {
   const cached = await getCachedWidget(shop.id, product.id);
   if (cached) return Response.json(cached);
 
-  const theme = await themeFor(shop.id);
+  const [theme, settings] = await Promise.all([
+    themeFor(shop.id),
+    db.shopSettings.findUnique({ where: { shopId: shop.id }, select: { allReviewsPageUrl: true } }),
+  ]);
 
   const reviews = await db.review.findMany({
     where: { productId: product.id, status: "PUBLISHED" },
@@ -85,13 +106,14 @@ export const loader = async ({ request }) => {
   });
 
   const average = reviews.length ? reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length : null;
-  const moreUrl = reviews.length > INLINE_REVIEW_LIMIT ? `/apps/reviews/all?productId=${encodeURIComponent(productId)}` : null;
+  const moreUrl = reviews.length > INLINE_REVIEW_LIMIT ? buildMoreUrl(settings?.allReviewsPageUrl, productId) : null;
 
   const payload = buildPayload(theme, {
     count: reviews.length,
     average,
     reviews: reviews.slice(0, INLINE_REVIEW_LIMIT),
     moreUrl,
+    productId,
   });
   await setCachedWidget(shop.id, product.id, payload);
   return Response.json(payload);
