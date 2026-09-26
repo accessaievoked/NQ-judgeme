@@ -20,7 +20,8 @@ import {
   renderRatingSummaryHtml,
   ratingSummaryCss,
 } from "../reviewWidget/ratingSummaryTemplate";
-import { invalidateShopReviewCache } from "../reviewWidget/reviewCache.server";
+import { invalidateReviewSummaryTheme } from "../reviewWidget/reviewCache.server";
+
 
 const PREVIEW_DATA = { count: 128, average: 4.6 };
 
@@ -80,7 +81,7 @@ export const action = async ({ request }) => {
 
   if (intent === "reset") {
     await db.ratingSummaryTheme.deleteMany({ where: { shopId: shop.id } });
-    await invalidateShopReviewCache(shop.id);
+    await invalidateReviewSummaryTheme(shop.id);
     return { ok: true, intent, ...withPreview(buildState(null)) };
   }
 
@@ -111,7 +112,7 @@ export const action = async ({ request }) => {
     create: { shopId: shop.id, ...data },
     update: data,
   });
-  await invalidateShopReviewCache(shop.id);
+  await invalidateReviewSummaryTheme(shop.id);
 
   return { ok: true, intent: "save", ...withPreview(buildState(theme)) };
 };

@@ -1,20 +1,9 @@
-// Redis-backed cache for the two hot, read-heavy storefront endpoints
-// (apps.reviews.jsx's inline widget JSON, apps.reviews.all.jsx's paginated
-// page) so a busy product page doesn't hit Postgres on every pageview.
-// Redis is already a hard dependency of this app (queue.server.ts's BullMQ
-// queues need it), so no extra fallback/guarding is needed here.
-//
-// Invalidation is deliberately blunt: any create or status change for a
-// product's reviews wipes *everything* cached for that product (the inline
-// widget, every cached page number, every cached search query) rather than
-// trying to patch just the affected entry. Reviews change rarely compared to
-// how often they're read, so correctness-by-simplicity here is worth far
-// more than the marginal cache-hit-rate loss from occasionally over-clearing.
 import redis from "../redis.server";
 
 const TTL_SECONDS = 5 * 60;
 const NAMESPACE = "jm:reviews";
 
+// Existing cache keys — keep these unchanged.
 function widgetKey(shopId: string, productId: string): string {
   return `${NAMESPACE}:widget:${shopId}:${productId}`;
 }
@@ -23,23 +12,135 @@ function summaryKey(shopId: string, productId: string): string {
   return `${NAMESPACE}:summary:${shopId}:${productId}`;
 }
 
-// Search query is part of the key (not just the page number) since a
-// query changes which rows land on "page 2" entirely.
-function allPageKey(shopId: string, productId: string, page: number, q: string): string {
+function allPageKey(
+  shopId: string,
+  productId: string,
+  page: number,
+  q: string,
+): string {
   return `${NAMESPACE}:all:${shopId}:${productId}:${page}:${q}`;
 }
 
-// The pattern every allPageKey for a product matches, regardless of page/q —
-// used only by invalidation below.
 function allPagePattern(shopId: string, productId: string): string {
   return `${NAMESPACE}:all:${shopId}:${productId}:*`;
 }
 
-export type CachedWidget = { html: string; css: string };
+// -----------------------------------------------------------------------------
+// NEW: Rating-summary data cache
+// One cache per shop + product.
+// Stores only review count + average rating.
+// -----------------------------------------------------------------------------
 
-export async function getCachedWidget(shopId: string, productId: string): Promise<CachedWidget | null> {
+const REVIEW_SUMMARY_NAMESPACE = "review-summary";
+const REVIEW_SUMMARY_THEME_NAMESPACE = "review-summary-theme";
+
+function reviewSummaryKey(shopId: string, productId: string): string {
+  return `${REVIEW_SUMMARY_NAMESPACE}:${shopId}:${productId}`;
+}
+
+function reviewSummaryThemeKey(shopId: string): string {
+  return `${REVIEW_SUMMARY_THEME_NAMESPACE}:${shopId}`;
+}
+
+export type CachedReviewSummary = {
+  count: number;
+  average: number | null;
+};
+
+export async function getCachedReviewSummary(
+  shopId: string,
+  productId: string,
+): Promise<CachedReviewSummary | null> {
+  const raw = await redis.get(reviewSummaryKey(shopId, productId));
+
+  if (!raw) return null;
+
+  try {
+    return JSON.parse(raw) as CachedReviewSummary;
+  } catch {
+    return null;
+  }
+}
+
+export async function setCachedReviewSummary(
+  shopId: string,
+  productId: string,
+  data: CachedReviewSummary,
+): Promise<void> {
+  await redis.set(
+    reviewSummaryKey(shopId, productId),
+    JSON.stringify(data),
+  );
+}
+
+// -----------------------------------------------------------------------------
+// NEW: Rating-summary theme cache
+// One cache per shop/vendor.
+// No TTL.
+// It remains until the merchant saves or resets the rating-summary theme.
+// -----------------------------------------------------------------------------
+
+export type CachedReviewSummaryTheme = {
+  html: string;
+  css: string;
+  countText: string | null;
+};
+
+export async function getCachedReviewSummaryTheme(
+  shopId: string,
+): Promise<CachedReviewSummaryTheme | null> {
+  const raw = await redis.get(reviewSummaryThemeKey(shopId));
+
+  if (!raw) return null;
+
+  try {
+    return JSON.parse(raw) as CachedReviewSummaryTheme;
+  } catch {
+    return null;
+  }
+}
+
+export async function setCachedReviewSummaryTheme(
+  shopId: string,
+  data: CachedReviewSummaryTheme,
+): Promise<void> {
+  // Intentionally NO TTL.
+  await redis.set(
+    reviewSummaryThemeKey(shopId),
+    JSON.stringify(data),
+  );
+}
+
+export async function invalidateReviewSummary(
+  shopId: string,
+  productId: string,
+): Promise<void> {
+  await redis.del(reviewSummaryKey(shopId, productId));
+}
+
+export async function invalidateReviewSummaryTheme(
+  shopId: string,
+): Promise<void> {
+  await redis.del(reviewSummaryThemeKey(shopId));
+}
+
+// -----------------------------------------------------------------------------
+// Existing widget cache
+// -----------------------------------------------------------------------------
+
+export type CachedWidget = {
+  html: string;
+  css: string;
+};
+
+export async function getCachedWidget(
+  shopId: string,
+  productId: string,
+): Promise<CachedWidget | null> {
   const raw = await redis.get(widgetKey(shopId, productId));
+
   if (!raw) return null;
+
   try {
     return JSON.parse(raw);
   } catch {
@@ -47,18 +148,37 @@ export async function getCachedWidget(shopId: string, productId: string): Promis
   }
 }
 
-export async function setCachedWidget(shopId: string, productId: string, data: CachedWidget): Promise<void> {
-  await redis.set(widgetKey(shopId, productId), JSON.stringify(data), "EX", TTL_SECONDS);
+export async function setCachedWidget(
+  shopId: string,
+  productId: string,
+  data: CachedWidget,
+): Promise<void> {
+  await redis.set(
+    widgetKey(shopId, productId),
+    JSON.stringify(data),
+    "EX",
+    TTL_SECONDS,
+  );
 }
 
-export type CachedSummary = { html: string; css: string };
+// -----------------------------------------------------------------------------
+// Existing summary cache
+// Kept unchanged so existing review widget behavior is not broken.
+// -----------------------------------------------------------------------------
 
-// Same shape/TTL as the inline widget cache above, keyed separately since a
-// storefront can embed the summary badge on pages (collections, cart) that
-// never fetch the full widget, and vice versa.
-export async function getCachedSummary(shopId: string, productId: string): Promise<CachedSummary | null> {
+export type CachedSummary = {
+  html: string;
+  css: string;
+};
+
+export async function getCachedSummary(
+  shopId: string,
+  productId: string,
+): Promise<CachedSummary | null> {
   const raw = await redis.get(summaryKey(shopId, productId));
+
   if (!raw) return null;
+
   try {
     return JSON.parse(raw);
   } catch {
@@ -66,41 +186,89 @@ export async function getCachedSummary(shopId: string, productId: string): Promi
   }
 }
 
-export async function setCachedSummary(shopId: string, productId: string, data: CachedSummary): Promise<void> {
-  await redis.set(summaryKey(shopId, productId), JSON.stringify(data), "EX", TTL_SECONDS);
+export async function setCachedSummary(
+  shopId: string,
+  productId: string,
+  data: CachedSummary,
+): Promise<void> {
+  await redis.set(
+    summaryKey(shopId, productId),
+    JSON.stringify(data),
+    "EX",
+    TTL_SECONDS,
+  );
 }
 
-export async function getCachedAllPage(shopId: string, productId: string, page: number, q: string): Promise<string | null> {
+// -----------------------------------------------------------------------------
+// Existing all-pages cache
+// -----------------------------------------------------------------------------
+
+export async function getCachedAllPage(
+  shopId: string,
+  productId: string,
+  page: number,
+  q: string,
+): Promise<string | null> {
   return redis.get(allPageKey(shopId, productId, page, q));
 }
 
-export async function setCachedAllPage(shopId: string, productId: string, page: number, q: string, html: string): Promise<void> {
-  await redis.set(allPageKey(shopId, productId, page, q), html, "EX", TTL_SECONDS);
+export async function setCachedAllPage(
+  shopId: string,
+  productId: string,
+  page: number,
+  q: string,
+  html: string,
+): Promise<void> {
+  await redis.set(
+    allPageKey(shopId, productId, page, q),
+    html,
+    "EX",
+    TTL_SECONDS,
+  );
 }
 
-// Call this after ANY write that changes what a product's published reviews
-// look like: a new review created (any of the three submission paths — the
-// inline rate widget, the emailed /r/:token form, the public write-review
-// page) or an admin publish/hide/etc. status change. `redis.keys()` does a
-// full-namespace scan, which is fine at this app's scale but would need
-// switching to SCAN before it saw production traffic at real volume.
-export async function invalidateReviewCache(shopId: string, productId: string): Promise<void> {
+// -----------------------------------------------------------------------------
+// Existing product review invalidation
+//
+// IMPORTANT:
+// This still clears the existing widget + all-page caches.
+// It ALSO clears the new review-summary data cache.
+// It does NOT touch the vendor's rating-summary HTML/CSS theme cache.
+// -----------------------------------------------------------------------------
+
+export async function invalidateReviewCache(
+  shopId: string,
+  productId: string,
+): Promise<void> {
   const pattern = allPagePattern(shopId, productId);
+
   const [pageKeys] = await Promise.all([
     redis.keys(pattern),
+
+    // Existing caches.
     redis.del(widgetKey(shopId, productId)),
     redis.del(summaryKey(shopId, productId)),
+
+    // NEW rating-summary data cache.
+    redis.del(reviewSummaryKey(shopId, productId)),
   ]);
-  if (pageKeys.length) await redis.del(...pageKeys);
+
+  if (pageKeys.length) {
+    await redis.del(...pageKeys);
+  }
 }
 
-// Widget styling (WidgetTheme) is shop-wide, not per-product, so saving or
-// resetting it in /app/widget-editor or /app/widget-style can't target one
-// product's cache key the way a new review can — it has to sweep every
-// cached entry for the shop instead. Called from both those routes' save
-// and reset actions so a merchant never has to wait out the TTL to see
-// their own change reflected on the storefront.
-export async function invalidateShopReviewCache(shopId: string): Promise<void> {
+// -----------------------------------------------------------------------------
+// Existing full-shop invalidation.
+// Kept because other review/widget functionality may still use it.
+// -----------------------------------------------------------------------------
+
+export async function invalidateShopReviewCache(
+  shopId: string,
+): Promise<void> {
   const keys = await redis.keys(`${NAMESPACE}:*:${shopId}:*`);
-  if (keys.length) await redis.del(...keys);
+
+  if (keys.length) {
+    await redis.del(...keys);
+  }
 }

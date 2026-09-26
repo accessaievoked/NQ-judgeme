@@ -31,9 +31,8 @@
     assign jm_max_width_css = "none"
   endif
 -%}
-<div
+<div 
   data-jm-rating-summary-root
-  data-product-id="{{ product.id }}"
   style="
     width: {{ block.settings.width }}%;
     max-width: {{ jm_max_width_css }};
@@ -48,7 +47,6 @@
     box-sizing: border-box;
   "
 >
-  <p class="jm-reviews__loading">Loading…</p>
 </div>
 
 <script src="{{ 'jm-rating-summary.js' | asset_url }}" defer></script>

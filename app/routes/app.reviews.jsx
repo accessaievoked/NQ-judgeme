@@ -9,19 +9,48 @@ import { invalidateReviewCache } from "../reviewWidget/reviewCache.server";
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   const shop = await db.shop.findUnique({ where: { domain: session.shop } });
-  if (!shop) return { reviews: [], products: [] };
 
-  const [reviews, products] = await Promise.all([
+  if (!shop) return { reviews: [], products: [], totalReviews: 0 };
+
+  const url = new URL(request.url);
+
+  // Optional pagination controls
+  const limitParam = Number(url.searchParams.get("limit"));
+  const skipParam = Number(url.searchParams.get("skip"));
+
+  // If no limit is supplied, keep the existing behaviour.
+  const hasLimit = Number.isInteger(limitParam) && limitParam > 0;
+  const limit = hasLimit ? Math.min(limitParam, 100) : undefined;
+  const skip = Number.isInteger(skipParam) && skipParam >= 0 ? skipParam : 0;
+
+  const reviewWhere = {
+    shopId: shop.id,
+  };
+
+  const [reviews, products, totalReviews] = await Promise.all([
     db.review.findMany({
-      where: { shopId: shop.id },
+      where: reviewWhere,
       orderBy: { createdAt: "desc" },
-      include: { product: true, customer: true },
+      ...(limit !== undefined ? { take: limit } : {}),
+      ...(skip > 0 ? { skip } : {}),
+      include: {
+        product: true,
+        customer: true,
+      },
     }),
-    // For the "Add a review" product picker below — a merchant filling one
-    // in by hand (a review from another channel, a pre-launch seed review,
-    // ...) needs to pick which product it's for, same as a real storefront
-    // submission is tied to one.
-    db.product.findMany({ where: { shopId: shop.id }, orderBy: { title: "asc" }, select: { id: true, title: true } }),
+
+    db.product.findMany({
+      where: { shopId: shop.id },
+      orderBy: { title: "asc" },
+      select: {
+        id: true,
+        title: true,
+      },
+    }),
+
+    db.review.count({
+      where: reviewWhere,
+    }),
   ]);
 
   return {
@@ -31,11 +60,22 @@ export const loader = async ({ request }) => {
       rating: r.rating,
       title: r.title,
       body: r.body,
-      author: r.authorName || r.customer?.firstName || "Anonymous",
+      author:
+        r.authorName ||
+        r.customer?.firstName ||
+        "Anonymous",
       status: r.status,
       createdAt: r.createdAt,
     })),
     products,
+    totalReviews,
+    pagination: {
+      limit: limit ?? totalReviews,
+      skip,
+      hasMore: limit !== undefined
+        ? skip + reviews.length < totalReviews
+        : false,
+    },
   };
 };
 

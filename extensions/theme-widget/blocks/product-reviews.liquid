@@ -1,35 +1,52 @@
 {% comment %}
   App block a merchant adds to their product template via Theme Editor.
-  Renders a container the widget.js script fills in client-side by calling
-  the app proxy (/apps/reviews) — no server-side Liquid->app call needed.
 
-  Box-model settings below (width/max-width/padding/margin/min-height/
-  background/corner radius) are per-instance, set right here in the Theme
-  Editor — separate from the shop-wide look-and-feel (colors, fonts, layout
-  of the reviews themselves) which stays in /app/widget-editor. They're
-  applied as an inline style on this wrapper div, which survives
-  jm-widget.js swapping the *contents* in via container.innerHTML.
+  Renders a container that jm-widget.js fills client-side by calling
+  the app proxy (/apps/reviews).
 
-  Themes that stack section blocks in a flex/grid layout (e.g. Horizon's
-  `.section-content-wrapper` flex column, confirmed via devtools) size each
-  block to its own content by default (`align-items: flex-start`) — so a
-  percentage width on our own div has nothing real to be a percentage OF.
-  Shopify always wraps an app block in a div with a predictable id,
-  `shopify-block-{{ block.id }}` — forcing ITS width here (a real CSS rule,
-  not inline on a node we don't render) makes our own 100%/max-width actually
-  mean something, since an explicit width on a flex/grid item always wins
-  over the container's default alignment-driven sizing.
+  Frontend controls:
+  - Review limit
+  - Show/hide See all reviews link
+  - See all reviews link text
+  - See all reviews position
+  - See all reviews padding
+  - See all reviews text color
+  - See all reviews background color
+  - See all reviews corner radius
+  - Width / max-width / alignment
+  - Minimum height
+  - Padding
+  - Top / bottom spacing
+  - Background color
+  - Corner radius
 {% endcomment %}
+
 {% style %}
   #shopify-block-{{ block.id }} {
     display: block;
     width: 100%;
     max-width: none;
   }
+
+  #shopify-block-{{ block.id }} .jm-reviews {
+    box-sizing: border-box;
+  }
+
+  #shopify-block-{{ block.id }} .jm-reviews__see-all {
+    color: {{ block.settings.see_all_text_color }};
+    background-color: {{ block.settings.see_all_background_color }};
+    padding: {{ block.settings.see_all_padding_vertical }}px {{ block.settings.see_all_padding_horizontal }}px;
+    border-radius: {{ block.settings.see_all_border_radius }}px;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    cursor: pointer;
+  }
 {% endstyle %}
+
 {%- liquid
   assign jm_align = block.settings.alignment
   assign jm_margin_x = "0"
+
   if jm_align == "left"
     assign jm_margin_x = "0 auto 0 0"
   elsif jm_align == "right"
@@ -39,14 +56,24 @@
   endif
 
   assign jm_max_width_css = block.settings.max_width | append: "px"
+
   if block.settings.max_width >= 2000
     assign jm_max_width_css = "none"
   endif
+
+  assign jm_product_reviews_url = "/apps/reviews/all?productId=" | append: product.id
 -%}
+
 <div
   class="jm-reviews"
   data-jm-reviews
   data-product-id="{{ product.id }}"
+  data-review-limit="{{ block.settings.review_limit }}"
+  data-review-skip="0"
+  data-show-see-all="{{ block.settings.show_see_all }}"
+  data-see-all-text="{{ block.settings.see_all_text | escape }}"
+  data-see-all-link="{{ jm_product_reviews_url }}"
+  data-see-all-position="{{ block.settings.see_all_position }}"
   style="
     width: {{ block.settings.width }}%;
     max-width: {{ jm_max_width_css }};
@@ -56,21 +83,25 @@
     margin-bottom: {{ block.settings.margin_bottom }}px;
     padding: {{ block.settings.padding }}px;
     border-radius: {{ block.settings.border_radius }}px;
-    {%- if block.settings.background_color != blank %}
-    background-color: {{ block.settings.background_color }};
-    {%- endif %}
+
+    {% if block.settings.background_color != blank %}
+      background-color: {{ block.settings.background_color }};
+    {% endif %}
+
     box-sizing: border-box;
   "
 >
   <p class="jm-reviews__loading">Loading reviews…</p>
+
 </div>
 
-{% comment %}
-  The reviews' own look-and-feel (colors, fonts, star style, layout of the
-  list/cards) comes from the shop's WidgetTheme (customizable in
-  /app/widget-editor), injected as a <style> tag by jm-widget.js itself —
-  no static stylesheet here.
-{% endcomment %}
+<a
+  href="/apps/reviews/all?productId={{ product.id }}"
+  class="jm-reviews__see-all"
+>
+  See all reviews
+</a>
+
 <script src="{{ 'jm-widget.js' | asset_url }}" defer></script>
 
 {% schema %}
@@ -78,6 +109,91 @@
   "name": "Product reviews",
   "target": "section",
   "settings": [
+    {
+      "type": "header",
+      "content": "Reviews"
+    },
+    {
+      "type": "range",
+      "id": "review_limit",
+      "label": "Reviews to show",
+      "min": 1,
+      "max": 50,
+      "step": 1,
+      "default": 5,
+      "info": "Controls how many reviews are shown in this block."
+    },
+    {
+      "type": "checkbox",
+      "id": "show_see_all",
+      "label": "Show See all reviews link",
+      "default": true
+    },
+    {
+      "type": "text",
+      "id": "see_all_text",
+      "label": "Link text",
+      "default": "See all reviews"
+    },
+    {
+      "type": "select",
+      "id": "see_all_position",
+      "label": "Link position",
+      "options": [
+        {
+          "value": "top",
+          "label": "Above reviews"
+        },
+        {
+          "value": "bottom",
+          "label": "Below reviews"
+        }
+      ],
+      "default": "bottom"
+    },
+    {
+      "type": "range",
+      "id": "see_all_padding_vertical",
+      "label": "Link vertical padding",
+      "min": 0,
+      "max": 40,
+      "step": 1,
+      "unit": "px",
+      "default": 0
+    },
+    {
+      "type": "range",
+      "id": "see_all_padding_horizontal",
+      "label": "Link horizontal padding",
+      "min": 0,
+      "max": 60,
+      "step": 1,
+      "unit": "px",
+      "default": 0
+    },
+    {
+      "type": "color",
+      "id": "see_all_text_color",
+      "label": "Link text color",
+      "default": "#000000"
+    },
+    {
+      "type": "color",
+      "id": "see_all_background_color",
+      "label": "Link background color",
+      "default": "#00000000"
+    },
+    {
+      "type": "range",
+      "id": "see_all_border_radius",
+      "label": "Link corner rounding",
+      "min": 0,
+      "max": 40,
+      "step": 1,
+      "unit": "px",
+      "default": 0
+    },
+
     {
       "type": "header",
       "content": "Size & spacing"
@@ -108,9 +224,18 @@
       "id": "alignment",
       "label": "Alignment",
       "options": [
-        { "value": "left", "label": "Left" },
-        { "value": "center", "label": "Center" },
-        { "value": "right", "label": "Right" }
+        {
+          "value": "left",
+          "label": "Left"
+        },
+        {
+          "value": "center",
+          "label": "Center"
+        },
+        {
+          "value": "right",
+          "label": "Right"
+        }
       ],
       "default": "center",
       "info": "Only visible when width or max width leaves extra room"
@@ -155,6 +280,7 @@
       "unit": "px",
       "default": 0
     },
+
     {
       "type": "header",
       "content": "Background"
@@ -178,3 +304,4 @@
   ]
 }
 {% endschema %}
+

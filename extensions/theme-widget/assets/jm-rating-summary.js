@@ -16,10 +16,10 @@
 
   function loadSummary(container, productId) {
     var url = "/apps/reviews/summary?productId=" + encodeURIComponent(productId);
-    console.log("[jm-rating-summary] fetching", url, "for productId:", JSON.stringify(productId));
+    // console.log("[jm-rating-summary] fetching", url, "for productId:", JSON.stringify(productId));
     fetch(url)
       .then(function (res) {
-        console.log("[jm-rating-summary] response status", res.status, res.headers.get("content-type"));
+        // console.log("[jm-rating-summary] response status", res.status, res.headers.get("content-type"));
         return res.text().then(function (text) {
           if (!res.ok) {
             console.error("[jm-rating-summary] non-OK response body (first 500 chars):", text.slice(0, 500));
@@ -44,9 +44,40 @@
       });
   }
 
-  document.querySelectorAll("[data-jm-rating-summary-root]").forEach(function (container) {
+  function getProductId(container) {
+    // 1. Explicit ID on the rating block
     var productId = container.getAttribute("data-product-id");
-    console.log("[jm-rating-summary] found block, data-product-id =", JSON.stringify(productId));
+
+    if (productId) {
+      return productId;
+    }
+
+    // 2. Walk upward and find the nearest product-aware element
+    var productParent = container.closest("[data-product-id]");
+
+    if (productParent) {
+      productId = productParent.getAttribute("data-product-id");
+
+      if (productId) {
+        return productId;
+      }
+    }
+
+    // 3. Product page fallback
+    var productForm = document.querySelector(
+      'form[action*="/cart/add"] input[name="product-id"]'
+    );
+
+    if (productForm && productForm.value) {
+      return productForm.value;
+    }
+
+    return null;
+  }
+
+  document.querySelectorAll("[data-jm-rating-summary-root]").forEach(function (container) {
+    var productId = getProductId(container);
+    // console.log("[jm-rating-summary] found block, data-product-id =", JSON.stringify(productId));
     if (!productId) {
       console.error("[jm-rating-summary] no data-product-id on this block's container — is `product` in scope where this block was placed? (e.g. not inside a generic Page, or a context without a bound product)");
       container.innerHTML = "";
