@@ -1,0 +1,55 @@
+# fly.toml — one Fly app, two process groups sharing the same Docker image
+# (Dockerfile): "app" (web — OAuth/webhooks/app-proxy/admin UI) and "worker"
+# (the BullMQ worker, worker/index.ts). Both run from the exact same build,
+# just started with a different command — see [processes] below — so there's
+# only ever one image to build/deploy, not two separate apps to keep in sync.
+#
+# Redis isn't a process group here — use Fly's managed Redis instead
+# (`fly redis create`), which needs no Dockerfile/volume/password of your
+# own; see DEPLOYMENT.md. (fly.redis.toml/Dockerfile.redis are still in this
+# repo if you'd rather self-host Redis as a third Fly app instead — that's
+# the more hands-on alternative DEPLOYMENT.md also documents, not required.)
+#
+# `app` must be globally unique across all of Fly, not just your org.
+app = "nq-judgme-demo"
+primary_region = "iad"
+
+[build]
+
+[env]
+  NODE_ENV = "production"
+  PORT = "3000"
+
+[processes]
+  app = "npm run docker-start"
+  worker = "npm run worker:docker"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+  # Only the "app" process group serves HTTP — the worker process group has
+  # nothing listening on a port, so it's excluded here rather than having
+  # Fly's proxy route traffic at it.
+  processes = ["app"]
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    timeout = "5s"
+    path = "/"
+
+[[vm]]
+  processes = ["app"]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1
+
+[[vm]]
+  processes = ["worker"]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1

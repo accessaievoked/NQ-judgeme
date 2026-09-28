@@ -1,0 +1,17 @@
+# Dockerfile.redis — self-hosted Redis for BullMQ (app/redis.server.ts),
+# deployed as its own Fly app on Fly's private network (6PN) — no public
+# [http_service]/[[services]] block in fly.redis.toml at all, since the web
+# and worker apps only ever need to reach it over the private network at
+# <this-app-name>.internal:6379, never from the public internet.
+#
+# A password (REDIS_PASSWORD, set via `fly secrets set` — see DEPLOYMENT.md)
+# is required: unlike Postgres, the stock redis image has no auth at all by
+# default, and this app's queue data (review request emails, etc.) has no
+# business being reachable by anything that guesses the right hostname.
+# --appendonly yes persists queued/in-flight jobs across restarts onto the
+# volume mounted at /data (see fly.redis.toml's [[mounts]]).
+FROM redis:7-alpine
+
+VOLUME ["/data"]
+
+CMD ["sh", "-c", "exec redis-server --requirepass \"$REDIS_PASSWORD\" --appendonly yes --dir /data"]

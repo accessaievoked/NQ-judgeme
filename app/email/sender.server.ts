@@ -42,6 +42,13 @@ function htmlToText(html: string): string {
     .trim();
 }
 
+// Whether sendEmail will actually deliver or just console-log (no SMTP_*
+// env vars set) — surfaced by the "send test email" feature so a merchant
+// isn't left wondering why a test never arrived.
+export function isEmailConfigured(): boolean {
+  return getTransporter() !== null;
+}
+
 export async function sendEmail(input: SendEmailInput): Promise<void> {
   const client = getTransporter();
 

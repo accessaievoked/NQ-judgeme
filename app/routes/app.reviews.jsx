@@ -36,6 +36,7 @@ export const loader = async ({ request }) => {
       include: {
         product: true,
         customer: true,
+        images: { orderBy: { position: "asc" } },
       },
     }),
 
@@ -66,6 +67,9 @@ export const loader = async ({ request }) => {
         "Anonymous",
       status: r.status,
       createdAt: r.createdAt,
+      images: r.images.map((i) => i.url),
+      reply: r.reply,
+      repliedAt: r.repliedAt,
     })),
     products,
     totalReviews,
@@ -104,14 +108,43 @@ export const action = async ({ request }) => {
     const body = String(formData.get("body") || "").trim().slice(0, 5000) || null;
     const authorName = String(formData.get("authorName") || "").trim().slice(0, 100) || null;
     const verifiedBuyer = formData.get("verifiedBuyer") === "true";
+    // One URL per line (or comma), same "paste a URL, up to a handful"
+    // convention as Judge.me's own CSV import (its "Picture URLs" column) —
+    // see app.import.jsx for the bulk path this mirrors.
+    const images = parseImageUrls(String(formData.get("images") || ""));
 
     await db.review.create({
-      data: { shopId: shop.id, productId, rating, title, body, authorName, verifiedBuyer, status },
+      data: {
+        shopId: shop.id,
+        productId,
+        rating,
+        title,
+        body,
+        authorName,
+        verifiedBuyer,
+        status,
+        images: images.length ? { create: images.map((url, position) => ({ url, position })) } : undefined,
+      },
     });
 
     if (status === "PUBLISHED") await invalidateReviewCache(shop.id, productId);
 
     return { ok: true, intent };
+  }
+
+  if (intent === "reply") {
+    const reviewId = String(formData.get("reviewId") || "");
+    const reply = String(formData.get("reply") || "").trim().slice(0, 5000);
+    if (!reviewId) return { ok: false, intent, error: "Invalid request" };
+
+    await db.review.update({
+      where: { id: reviewId, shopId: shop.id },
+      // Clearing the textarea and saving removes the reply (repliedAt reset
+      // to null too) rather than persisting an empty string as "replied".
+      data: { reply: reply || null, repliedAt: reply ? new Date() : null },
+    });
+
+    return { ok: true, intent, reviewId };
   }
 
   const reviewId = String(formData.get("reviewId") || "");
@@ -134,31 +167,99 @@ export const action = async ({ request }) => {
   return { ok: true, reviewId };
 };
 
-const STATUS_TONE = { PENDING: undefined, PUBLISHED: "success", HIDDEN: "warning", SPAM: "critical", REJECTED: "critical" };
+// Splits on newlines or commas, trims, drops blanks, caps at 5 — same limit
+// Judge.me's own CSV import documents for its "Picture URLs" column.
+function parseImageUrls(raw) {
+  return raw
+    .split(/[\n,]/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .slice(0, 5);
+}
+
+const STATUSES = ["PENDING", "PUBLISHED", "HIDDEN", "SPAM", "REJECTED"];
+
+function timeAgo(dateStr) {
+  const diffMs = Date.now() - new Date(dateStr).getTime();
+  const days = Math.floor(diffMs / 86400000);
+  if (days <= 0) return "Today";
+  if (days === 1) return "1 day ago";
+  if (days < 30) return `${days} days ago`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months} month${months === 1 ? "" : "s"} ago`;
+  const years = Math.floor(months / 12);
+  return `${years} year${years === 1 ? "" : "s"} ago`;
+}
 
 function ReviewRow({ review }) {
   // s-button is a custom element — the browser doesn't reliably treat it as
   // the form's "submitter", so name/value on it never reaches the server.
   // Submit explicitly instead of relying on that.
   const fetcher = useFetcher();
+  const replyFetcher = useFetcher();
+  const [replying, setReplying] = useState(false);
+  const [replyText, setReplyText] = useState(review.reply || "");
+
   const setStatus = (status) =>
     fetcher.submit({ reviewId: review.id, status }, { method: "POST" });
 
+  const saveReply = () => {
+    replyFetcher.submit({ intent: "reply", reviewId: review.id, reply: replyText }, { method: "POST" });
+    setReplying(false);
+  };
+
   return (
     <s-table-row>
-      <s-table-cell>{review.productTitle}</s-table-cell>
-      <s-table-cell>{"★".repeat(review.rating)}{"☆".repeat(5 - review.rating)}</s-table-cell>
-      <s-table-cell>{review.title || review.body?.slice(0, 60) || "—"}</s-table-cell>
-      <s-table-cell>{review.author}</s-table-cell>
-      <s-table-cell>
-        <s-badge tone={STATUS_TONE[review.status]}>{review.status}</s-badge>
-      </s-table-cell>
-      <s-table-cell>
-        <s-stack direction="inline" gap="tight">
-          <s-button onClick={() => setStatus("PUBLISHED")}>Publish</s-button>
-          <s-button onClick={() => setStatus("HIDDEN")}>Hide</s-button>
-        </s-stack>
-      </s-table-cell>
+        <s-table-cell>
+          {review.images[0] ? (
+            <img src={review.images[0]} alt="" className="jm-review-thumb" />
+          ) : (
+            <span className="jm-review-thumb jm-review-thumb--empty" aria-hidden="true">—</span>
+          )}
+          {review.images.length > 1 ? <div className="jm-review-thumb-count">+{review.images.length - 1}</div> : null}
+        </s-table-cell>
+        <s-table-cell>{review.productTitle}</s-table-cell>
+        <s-table-cell>{"★".repeat(review.rating)}{"☆".repeat(5 - review.rating)}</s-table-cell>
+        <s-table-cell>{review.title || review.body?.slice(0, 60) || "—"}</s-table-cell>
+        <s-table-cell>{review.author}</s-table-cell>
+        <s-table-cell>{timeAgo(review.createdAt)}</s-table-cell>
+        <s-table-cell>
+          <select
+            className="jm-status-select"
+            value={review.status}
+            onChange={(e) => setStatus(e.target.value)}
+            aria-label={`Status for review by ${review.author}`}
+          >
+            {STATUSES.map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+        </s-table-cell>
+        <s-table-cell>
+          {replying ? (
+            // Kept inside this one cell (not a spanned extra row) since
+            // s-table-cell's Polaris web component doesn't reliably honor a
+            // plain HTML colSpan attribute — this avoids depending on that.
+            <div className="jm-reply-box">
+              <textarea
+                className="jm-admin-field__input"
+                rows={2}
+                maxLength={5000}
+                placeholder="Write a public reply…"
+                value={replyText}
+                onChange={(e) => setReplyText(e.target.value)}
+              ></textarea>
+              <s-stack direction="inline" gap="tight">
+                <s-button variant="primary" onClick={saveReply}>Save</s-button>
+                <s-button variant="tertiary" onClick={() => setReplying(false)}>Cancel</s-button>
+              </s-stack>
+            </div>
+          ) : (
+            <s-button variant={review.reply ? "primary" : "tertiary"} onClick={() => setReplying(true)}>
+              {review.reply ? "Edit reply" : "Reply"}
+            </s-button>
+          )}
+        </s-table-cell>
     </s-table-row>
   );
 }
@@ -180,6 +281,7 @@ function AddReviewForm({ products }) {
   const [body, setBody] = useState("");
   const [authorName, setAuthorName] = useState("");
   const [verifiedBuyer, setVerifiedBuyer] = useState(false);
+  const [images, setImages] = useState("");
 
   const submitting = fetcher.state !== "idle";
   const error = fetcher.data?.intent === "create" && !fetcher.data.ok ? fetcher.data.error : null;
@@ -195,12 +297,13 @@ function AddReviewForm({ products }) {
       setBody("");
       setAuthorName("");
       setVerifiedBuyer(false);
+      setImages("");
     }
   }
 
   const submit = () => {
     fetcher.submit(
-      { intent: "create", productId, rating: String(rating), status, title, body, authorName, verifiedBuyer: String(verifiedBuyer) },
+      { intent: "create", productId, rating: String(rating), status, title, body, authorName, verifiedBuyer: String(verifiedBuyer), images },
       { method: "POST" },
     );
   };
@@ -251,6 +354,16 @@ function AddReviewForm({ products }) {
             <span className="jm-admin-field__label">Review text (optional)</span>
             <textarea className="jm-admin-field__input" rows={3} maxLength={5000} value={body} onChange={(e) => setBody(e.target.value)}></textarea>
           </label>
+          <label className="jm-admin-field">
+            <span className="jm-admin-field__label">Photo URLs (optional — one per line, up to 5)</span>
+            <textarea
+              className="jm-admin-field__input"
+              rows={2}
+              placeholder={"https://.../photo1.jpg\nhttps://.../photo2.jpg"}
+              value={images}
+              onChange={(e) => setImages(e.target.value)}
+            ></textarea>
+          </label>
           <label className="jm-admin-checkbox">
             <input type="checkbox" checked={verifiedBuyer} onChange={(e) => setVerifiedBuyer(e.target.checked)} />
             <span>Mark as a verified buyer</span>
@@ -278,22 +391,42 @@ export default function Reviews() {
           padding: 7px 10px; border: 1px solid #c9cccf; border-radius: 6px; background: #fff; color: #1a1a1a;
         }
         .jm-admin-checkbox { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+        .jm-review-thumb {
+          width: 36px; height: 36px; border-radius: 6px; object-fit: cover; display: block;
+          background: #f1f1f1; border: 1px solid #e1e1e1;
+        }
+        .jm-review-thumb--empty {
+          display: flex; align-items: center; justify-content: center; color: #999; font-size: 12px;
+        }
+        .jm-review-thumb-count {
+          font-size: 11px; color: #666; margin-top: 2px; text-align: center;
+        }
+        .jm-status-select {
+          font: inherit; font-size: 13px; padding: 6px 8px; border: 1px solid #c9cccf;
+          border-radius: 6px; background: #fff; color: #1a1a1a; cursor: pointer;
+        }
+        .jm-reply-box { min-width: 220px; }
       `}</style>
 
       <AddReviewForm products={products} />
 
       <s-section heading={`${reviews.length} review${reviews.length === 1 ? "" : "s"}`}>
+        <s-paragraph>
+          Already have reviews on another platform? <s-link href="/app/import">Import them</s-link>.
+        </s-paragraph>
         {reviews.length === 0 ? (
           <s-paragraph>No reviews submitted yet.</s-paragraph>
         ) : (
           <s-table>
             <s-table-header-row>
-              <s-table-header listSlot="primary">Product</s-table-header>
+              <s-table-header listSlot="primary">Photo</s-table-header>
+              <s-table-header listSlot="secondary">Product</s-table-header>
               <s-table-header listSlot="secondary">Rating</s-table-header>
               <s-table-header listSlot="secondary">Review</s-table-header>
               <s-table-header listSlot="secondary">Author</s-table-header>
+              <s-table-header listSlot="secondary">Created</s-table-header>
               <s-table-header listSlot="secondary">Status</s-table-header>
-              <s-table-header listSlot="secondary">Actions</s-table-header>
+              <s-table-header listSlot="secondary">Reply</s-table-header>
             </s-table-header-row>
             <s-table-body>
               {reviews.map((review) => (

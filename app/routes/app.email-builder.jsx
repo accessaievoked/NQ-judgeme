@@ -20,15 +20,18 @@
 // mirror.
 //
 // The single editor for every trigger now (the older flow-layout/rich-text
-// page, app.email-templates.jsx, and its EmailTemplate table, are gone) — a
-// trigger resolves through EmailLayout (this page) first, and only falls
-// back to any EmailTemplate row a shop saved back when that older page still
-// existed (see templates.server.ts's resolveTemplate). buildState below
-// seeds a trigger's very first visit here from that legacy row (into Raw
-// HTML mode, subject + bodyHtml carried over as-is) instead of silently
-// discarding a shop's existing customization the moment that page's own UI
-// disappeared — once Saved here, the new EmailLayout row always wins and
-// that seeding never runs again for this trigger.
+// page, app.email-templates.jsx, is gone). A trigger resolves through
+// EmailLayout (this page) first, and only falls back to any EmailTemplate
+// row a shop saved back when that older page still existed (see
+// templates.server.ts's resolveTemplate) — but this builder itself never
+// seeds anything from that legacy row anymore: it used to (into Raw HTML
+// mode, on a trigger's very first visit here), but that meant Canvas and
+// Raw HTML could show two genuinely different emails for the exact same,
+// never-yet-saved trigger — confusing, and looked like a bug. Now a
+// never-saved trigger always starts from the exact same content in both
+// tabs (defaultElements() below, and RawEditor's own
+// compileEmailLayoutHtml(...) of those same elements) — "switch tabs" never
+// silently swaps the email you're looking at.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useFetcher, useLoaderData } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
@@ -36,7 +39,8 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
 import { compileEmailLayoutHtml } from "../email/emailLayoutCompiler";
-import { DEFAULT_TEMPLATES } from "../email/templates.server";
+import { DEFAULT_TEMPLATES, fillTokens } from "../email/templates.server";
+import { sendEmail, isEmailConfigured } from "../email/sender.server";
 
 const TRIGGER_LABELS = {
   "orders/paid": "On order paid",
@@ -62,20 +66,18 @@ function defaultElements(triggerType) {
   ];
 }
 
-// `legacyTemplate` is a shop's EmailTemplate row from the now-removed
-// classic editor, if one exists — only consulted when there's no
-// EmailLayout yet (a trigger this shop has never opened here since the
-// merge). Free-form rich-text/raw HTML can't be safely decomposed into
-// positioned canvas boxes, so it seeds Raw HTML mode, not the canvas.
-function buildState(layout, triggerType, legacyTemplate) {
+function buildState(layout, triggerType) {
   const elements = Array.isArray(layout?.elements) && layout.elements.length ? layout.elements : defaultElements(triggerType);
-  const seedFromLegacy = !layout && Boolean(legacyTemplate);
   return {
     triggerType,
-    mode: layout?.mode ?? (seedFromLegacy ? "html" : "canvas"),
-    subject: layout?.subject ?? legacyTemplate?.subject ?? DEFAULT_TEMPLATES[triggerType]?.subject ?? "",
+    mode: layout?.mode ?? "canvas",
+    subject: layout?.subject ?? DEFAULT_TEMPLATES[triggerType]?.subject ?? "",
     elements,
-    rawHtml: layout?.rawHtml ?? (seedFromLegacy ? legacyTemplate.bodyHtml : ""),
+    // "" (not seeded from anywhere else) when unsaved — RawEditor itself
+    // fills this in with compileEmailLayoutHtml(elements, canvasWidth) so
+    // Raw HTML's first look always matches Canvas's, instead of this page
+    // guessing at content here.
+    rawHtml: layout?.rawHtml ?? "",
     canvasWidth: layout?.canvasWidth ?? DEFAULT_CANVAS_WIDTH,
     isCustom: Boolean(layout),
   };
@@ -90,19 +92,10 @@ export const loader = async ({ request }) => {
     return { shopId: null, layouts: triggerTypes.map((t) => buildState(null, t)) };
   }
 
-  const [savedLayouts, legacyTemplates] = await Promise.all([
-    db.emailLayout.findMany({ where: { shopId: shop.id } }),
-    db.emailTemplate.findMany({ where: { shopId: shop.id } }),
-  ]);
+  const savedLayouts = await db.emailLayout.findMany({ where: { shopId: shop.id } });
   return {
     shopId: shop.id,
-    layouts: triggerTypes.map((t) =>
-      buildState(
-        savedLayouts.find((l) => l.triggerType === t),
-        t,
-        legacyTemplates.find((tpl) => tpl.triggerType === t),
-      ),
-    ),
+    layouts: triggerTypes.map((t) => buildState(savedLayouts.find((l) => l.triggerType === t), t)),
   };
 };
 
@@ -137,6 +130,36 @@ export const action = async ({ request }) => {
     } catch {
       elements = [];
     }
+  }
+
+  // Sends whatever's currently in the editor (unsaved edits included) with
+  // sample token values — doesn't touch EmailLayout at all, so it's safe to
+  // try before Save. Real trigger emails always go through resolveTemplate
+  // (templates.server.ts) against the *saved* row; this reuses the exact
+  // same fillTokens/sendEmail primitives just against this live draft.
+  if (intent === "test-send") {
+    const testEmail = String(formData.get("testEmail") || "").trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(testEmail)) {
+      return { ok: false, intent, triggerType, error: "Enter a valid email address." };
+    }
+
+    const sampleTokens = {
+      customerName: "Jordan (test)",
+      productTitle: "Sample Product",
+      shopName: shop.domain,
+      reviewUrl: "#",
+      reminderNumber: 1,
+      discountSection: "",
+    };
+    const html = mode === "html" ? rawHtml : compileEmailLayoutHtml(elements, canvasWidth);
+
+    try {
+      await sendEmail({ to: testEmail, subject: `[Test] ${fillTokens(subject, sampleTokens)}`, html: fillTokens(html, sampleTokens) });
+    } catch (err) {
+      return { ok: false, intent, triggerType, error: `Couldn't send: ${err instanceof Error ? err.message : String(err)}` };
+    }
+
+    return { ok: true, intent, triggerType, testEmail, devMode: !isEmailConfigured() };
   }
 
   const layout = await db.emailLayout.upsert({
@@ -385,7 +408,7 @@ const ALIGN_OPTIONS = [
 // SettingsPanel/ControlField split, just hardcoded per element type instead
 // of driven by a declarative `controls` array module, since there are only
 // three fixed types here rather than an open-ended block palette.
-function ElementSettings({ element, onChange, onDelete, onBringToFront, onSendToBack }) {
+function ElementSettings({ element, onChange, onDelete, onDuplicate, onBringToFront, onSendToBack }) {
   if (!element) {
     return (
       <s-section heading="Settings">
@@ -500,6 +523,7 @@ function ElementSettings({ element, onChange, onDelete, onBringToFront, onSendTo
         </SettingsGroup>
 
         <s-stack direction="inline" gap="tight">
+          <button type="button" className="jm-ghost-btn" onClick={onDuplicate}>⧉ Duplicate</button>
           <button type="button" className="jm-ghost-btn" onClick={onBringToFront}>Bring to front</button>
           <button type="button" className="jm-ghost-btn" onClick={onSendToBack}>Send to back</button>
           <s-button variant="tertiary" onClick={onDelete}>Delete element</s-button>
@@ -522,24 +546,24 @@ function newElementId(type) {
 
 const EDITOR_CHROME_CSS = `
   .jm-field { display: block; }
-  .jm-field__label { display: block; font-size: 12px; color: #4a4a4a; margin-bottom: 3px; }
+  .jm-field__label { display: block; font-size: 12px; color: #4a4a4a; margin-bottom: 5px; }
   .jm-field__input {
     display: block; width: 100%; box-sizing: border-box; font: inherit; font-size: 13px;
-    padding: 7px 10px; border: 1px solid #c9cccf; border-radius: 6px; background: #fff; color: #1a1a1a;
+    padding: 8px 11px; border: 1px solid #c9cccf; border-radius: 6px; background: #fff; color: #1a1a1a;
   }
   .jm-field__input:focus { outline: 2px solid #5c6ac4; outline-offset: -1px; border-color: #5c6ac4; }
   select.jm-field__input { cursor: pointer; }
-  .jm-settings-group { padding: 12px 14px; background: #fafafb; border: 1px solid #ececec; border-radius: 8px; }
-  .jm-toggle { display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+  .jm-settings-group { padding: 16px 18px; background: #fafafb; border: 1px solid #ececec; border-radius: 10px; }
+  .jm-toggle { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
   .jm-ghost-btn {
     font: inherit; font-size: 13px; cursor: pointer; background: #fff; border: 1px solid #c9cccf;
-    border-radius: 6px; padding: 6px 10px; color: #1a1a1a;
+    border-radius: 6px; padding: 7px 12px; color: #1a1a1a;
   }
   .jm-ghost-btn:hover { background: #f6f6f7; }
-  .jm-list-item { padding: 3px 0; }
+  .jm-list-item { padding: 4px 0; }
   .jm-palette-item {
     display: block; width: 100%; text-align: left; font: inherit; cursor: pointer;
-    background: #fff; border: 1px solid #e1e1e1; border-radius: 8px; padding: 8px 10px;
+    background: #fff; border: 1px solid #e1e1e1; border-radius: 8px; padding: 10px 12px;
   }
   .jm-palette-item:hover { background: #f6f6f7; border-color: #ccc; }
 `;
@@ -553,10 +577,10 @@ function elementListLabel(el) {
   return "Image";
 }
 
-function ElementList({ elements, selectedId, onSelect, onDelete }) {
+function ElementList({ elements, selectedId, onSelect, onDelete, onDuplicate }) {
   return (
     <s-section heading="Elements">
-      <s-stack direction="block" gap="tight">
+      <s-stack direction="block" gap="base">
         {elements.length === 0 ? <s-paragraph>No elements yet — add one below.</s-paragraph> : null}
         {elements.map((el) => (
           <div key={el.id} className="jm-list-item">
@@ -564,12 +588,63 @@ function ElementList({ elements, selectedId, onSelect, onDelete }) {
               <s-button variant={el.id === selectedId ? "primary" : "tertiary"} onClick={() => onSelect(el.id)}>
                 {ELEMENT_ICONS[el.type] ?? "🔘"} {elementListLabel(el)}
               </s-button>
+              <s-button variant="tertiary" onClick={() => onDuplicate(el.id)}>⧉</s-button>
               <s-button variant="tertiary" onClick={() => onDelete(el.id)}>Delete</s-button>
             </s-stack>
           </div>
         ))}
       </s-stack>
     </s-section>
+  );
+}
+
+// Shared by CanvasEditor and RawEditor — `getFields` returns the extra
+// form fields ("mode" + whatever that mode needs) so each editor can pass
+// its own current live state without this component knowing which mode
+// it's in. Uses its own fetcher (not the Save/Reset one) so sending a test
+// never fights with — or gets clobbered by — a Save in flight.
+function TestSendControl({ triggerType, getFields }) {
+  const fetcher = useFetcher();
+  const [email, setEmail] = useState("");
+  const sending = fetcher.state !== "idle";
+  const result = fetcher.data?.intent === "test-send" ? fetcher.data : null;
+
+  const send = () => {
+    const formData = new FormData();
+    formData.set("intent", "test-send");
+    formData.set("triggerType", triggerType);
+    formData.set("testEmail", email);
+    for (const [key, value] of Object.entries(getFields())) formData.set(key, value);
+    fetcher.submit(formData, { method: "POST" });
+  };
+
+  return (
+    <s-stack direction="block" gap="tight">
+      <s-stack direction="inline" gap="tight" style={{ alignItems: "center", flexWrap: "wrap" }}>
+        <input
+          className="jm-field__input"
+          type="email"
+          placeholder="you@example.com"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          style={{ maxWidth: 240 }}
+          aria-label="Test email address"
+        />
+        <s-button variant="tertiary" disabled={sending || !email} onClick={send}>
+          {sending ? "Sending…" : "✉ Send test email"}
+        </s-button>
+      </s-stack>
+      {result ? (
+        result.ok ? (
+          <s-text tone="subdued">
+            Sent to {result.testEmail} with sample data
+            {result.devMode ? " — no SMTP configured, so check the server logs instead of an inbox." : "."}
+          </s-text>
+        ) : (
+          <s-text tone="critical">{result.error}</s-text>
+        )
+      ) : null}
+    </s-stack>
   );
 }
 
@@ -614,9 +689,13 @@ function CanvasEditor({ initial, triggerType, fetcher }) {
     return () => window.removeEventListener("message", onMessage);
   }, []);
 
-  function addElement(type) {
+  // `overrides` lets a palette shortcut (e.g. "Leave a review" below) add a
+  // button/text/etc. pre-filled with specific content instead of always the
+  // bare ELEMENT_DEFAULTS — still just a regular element afterwards, fully
+  // editable/duplicable/deletable like any other.
+  function addElement(type, overrides) {
     const id = newElementId(type);
-    const el = { id, type, x: 20, y: 20, ...ELEMENT_DEFAULTS[type] };
+    const el = { id, type, x: 20, y: 20, ...ELEMENT_DEFAULTS[type], ...overrides };
     // A section is a background box, meant to sit behind other elements, so
     // it's added at the back of the stack (same array position Send to back
     // moves an existing element to) instead of on top, covering everything.
@@ -631,6 +710,24 @@ function CanvasEditor({ initial, triggerType, fetcher }) {
   function deleteElement(id) {
     setElements((prev) => prev.filter((el) => el.id !== id));
     if (selectedId === id) setSelectedId(null);
+  }
+
+  // Clones the element right after itself, offset a bit so the copy isn't
+  // sitting exactly on top of the original (making it invisible until
+  // dragged) — same "duplicate, then tweak" workflow as most canvas/design
+  // tools, so a merchant doesn't have to rebuild an element from scratch
+  // just to get a near-identical second one.
+  function duplicateElement(id) {
+    const original = elements.find((e) => e.id === id);
+    if (!original) return;
+    const copy = { ...original, id: newElementId(original.type), x: original.x + 20, y: original.y + 20 };
+    const index = elements.findIndex((e) => e.id === id);
+    setElements((prev) => {
+      const next = [...prev];
+      next.splice(index + 1, 0, copy);
+      return next;
+    });
+    setSelectedId(copy.id);
   }
 
   function bringToFront(id) {
@@ -664,28 +761,35 @@ function CanvasEditor({ initial, triggerType, fetcher }) {
   };
 
   return (
-    <s-stack direction="block" gap="base">
+    <s-stack direction="block" gap="loose">
       <Field label="Subject" value={subject} onChange={setSubject} />
 
-      <div style={{ display: "flex", flexWrap: "nowrap", alignItems: "flex-start", gap: 20, overflowX: "auto", paddingBottom: 4 }}>
+      <div style={{ display: "flex", flexWrap: "nowrap", alignItems: "flex-start", gap: 28, overflowX: "auto", paddingBottom: 4 }}>
         <div style={{ flex: "0 0 220px", minWidth: 190 }}>
           <s-section heading="Add element">
-            <s-stack direction="block" gap="tight">
+            <s-stack direction="block" gap="base">
               <button type="button" className="jm-palette-item" onClick={() => addElement("text")}>📝 Text</button>
               <button type="button" className="jm-palette-item" onClick={() => addElement("image")}>🖼 Image</button>
               <button type="button" className="jm-palette-item" onClick={() => addElement("button")}>🔘 Button (link)</button>
+              <button
+                type="button"
+                className="jm-palette-item"
+                onClick={() => addElement("button", { text: "Leave a review", href: "{{reviewUrl}}" })}
+              >
+                ⭐ Leave a review button
+              </button>
               <button type="button" className="jm-palette-item" onClick={() => addElement("section")}>▭ Section (div)</button>
               <button type="button" className="jm-palette-item" onClick={() => addElement("divider")}>➖ Divider</button>
             </s-stack>
           </s-section>
-          <div style={{ marginTop: 16 }}>
-            <ElementList elements={elements} selectedId={selectedId} onSelect={setSelectedId} onDelete={deleteElement} />
+          <div style={{ marginTop: 20 }}>
+            <ElementList elements={elements} selectedId={selectedId} onSelect={setSelectedId} onDelete={deleteElement} onDuplicate={duplicateElement} />
           </div>
         </div>
 
         <div style={{ flex: "1 1 34%", minWidth: 280 }}>
           <s-section heading="Preview (click to select, drag to move)">
-            <div style={{ marginBottom: 8 }}>
+            <div style={{ marginBottom: 12 }}>
               {/* No live clamp on every keystroke — that used to snap the
                   value back mid-typing (e.g. clearing the field to type
                   "500" instantly reset to 280 after the first digit),
@@ -706,7 +810,7 @@ function CanvasEditor({ initial, triggerType, fetcher }) {
             <div style={{ border: "1px solid #ddd", borderRadius: 8, overflow: "hidden" }}>
               <iframe ref={iframeRef} title="Email preview" srcDoc={srcDoc} style={{ width: "100%", height: 420, border: "0", display: "block" }} />
             </div>
-            <s-stack direction="inline" gap="tight" style={{ marginTop: 8 }}>
+            <s-stack direction="inline" gap="base" style={{ marginTop: 14 }}>
               <s-button variant="primary" onClick={() => submit()}>Save</s-button>
               {initial.isCustom ? (
                 <s-button
@@ -719,11 +823,19 @@ function CanvasEditor({ initial, triggerType, fetcher }) {
                 </s-button>
               ) : null}
             </s-stack>
+            <div style={{ marginTop: 16 }}>
+              <TestSendControl
+                triggerType={triggerType}
+                getFields={() => ({ mode: "canvas", subject, canvasWidth, elements: JSON.stringify(elements) })}
+              />
+            </div>
           </s-section>
 
-          <s-section heading="Sent-email preview (compiled to email-safe HTML)">
-            <div style={{ border: "1px solid #ddd", borderRadius: 8, padding: 16, overflow: "auto" }} dangerouslySetInnerHTML={{ __html: compiledHtml }} />
-          </s-section>
+          <div style={{ marginTop: 20 }}>
+            <s-section heading="Sent-email preview (compiled to email-safe HTML)">
+              <div style={{ border: "1px solid #ddd", borderRadius: 8, padding: 16, overflow: "auto" }} dangerouslySetInnerHTML={{ __html: compiledHtml }} />
+            </s-section>
+          </div>
         </div>
 
         <div style={{ flex: "1 1 34%", minWidth: 300 }}>
@@ -731,6 +843,7 @@ function CanvasEditor({ initial, triggerType, fetcher }) {
             element={selected}
             onChange={updateElement}
             onDelete={() => selected && deleteElement(selected.id)}
+            onDuplicate={() => selected && duplicateElement(selected.id)}
             onBringToFront={() => selected && bringToFront(selected.id)}
             onSendToBack={() => selected && sendToBack(selected.id)}
           />
@@ -743,7 +856,16 @@ function CanvasEditor({ initial, triggerType, fetcher }) {
 }
 
 function RawEditor({ initial, triggerType, fetcher }) {
-  const [rawHtml, setRawHtml] = useState(initial.rawHtml || "<div>Write raw HTML here…</div>");
+  // A trigger that's never been saved in Raw HTML mode has no `rawHtml` in
+  // the DB (buildState() returns "" for it) — falling back to a hardcoded
+  // placeholder there used to show completely different content than the
+  // Canvas tab's own preview for the exact same trigger, which read as a
+  // bug ("why did switching tabs wipe my email?") rather than two views of
+  // the same thing. Compiling the *saved* canvas elements instead means
+  // switching to Raw HTML always starts from what you were just looking
+  // at — same content, same as the Canvas tab's own compiled-HTML preview
+  // below — and you edit from there instead of from scratch.
+  const [rawHtml, setRawHtml] = useState(() => initial.rawHtml || compileEmailLayoutHtml(initial.elements, initial.canvasWidth));
   const [subject, setSubject] = useState(initial.subject);
 
   const submit = (extraIntent) => {
@@ -758,16 +880,16 @@ function RawEditor({ initial, triggerType, fetcher }) {
   };
 
   return (
-    <s-stack direction="block" gap="base">
+    <s-stack direction="block" gap="loose">
       <Field label="Subject" value={subject} onChange={setSubject} />
       <s-paragraph>
         Full control — write or paste any HTML/inline CSS. Tokens: {TOKENS.join(" ")}.
       </s-paragraph>
       <div>
         <span className="jm-field__label">Raw HTML</span>
-        <textarea rows={16} value={rawHtml} onChange={(e) => setRawHtml(e.target.value)} style={{ width: "100%", padding: 8, marginTop: 4, boxSizing: "border-box", fontFamily: "monospace" }} />
+        <textarea rows={16} value={rawHtml} onChange={(e) => setRawHtml(e.target.value)} style={{ width: "100%", padding: 10, marginTop: 6, boxSizing: "border-box", fontFamily: "monospace" }} />
       </div>
-      <s-stack direction="inline" gap="tight">
+      <s-stack direction="inline" gap="base">
         <s-button variant="primary" onClick={() => submit()}>Save</s-button>
         {initial.isCustom ? (
           <s-button
@@ -780,6 +902,10 @@ function RawEditor({ initial, triggerType, fetcher }) {
           </s-button>
         ) : null}
       </s-stack>
+      <TestSendControl
+        triggerType={triggerType}
+        getFields={() => ({ mode: "html", subject, canvasWidth: initial.canvasWidth, rawHtml })}
+      />
       <s-section heading="Preview">
         <div style={{ border: "1px solid #ddd", borderRadius: 8, padding: 16 }} dangerouslySetInnerHTML={{ __html: rawHtml }} />
       </s-section>
@@ -803,7 +929,7 @@ function TriggerEditor({ initial }) {
 
   return (
     <s-section heading={TRIGGER_LABELS[initial.triggerType]}>
-      <s-stack direction="inline" gap="base">
+      <s-stack direction="inline" gap="base" style={{ marginBottom: 16 }}>
         <s-text>Editor:</s-text>
         <s-stack direction="inline" gap="tight">
           <s-button variant={mode === "canvas" ? "primary" : "tertiary"} onClick={() => setMode("canvas")}>Canvas (click &amp; drag)</s-button>

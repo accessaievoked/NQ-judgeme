@@ -29,6 +29,7 @@ export type AllReviewsItem = {
   verifiedBuyer?: boolean;
   customer?: { firstName: string | null; lastName: string | null } | null;
   createdAt: string | Date;
+  images?: string[];
 };
 
 export type AllReviewsData = {
@@ -82,6 +83,18 @@ function verifiedMarkup(review: AllReviewsItem): string {
   return review.verifiedBuyer ? ` <span class="jm-reviews__item-verified-badge">✓ Verified buyer</span>` : "";
 }
 
+// Same jm-reviews__item-image* classes/markup renderTemplate.ts's
+// imagesMarkup produces for the inline widget — intentional, so a photo
+// looks identical in both places and is already styled by whatever's saved
+// on WidgetTheme (see this file's header comment).
+function imagesMarkup(review: AllReviewsItem): string {
+  if (!review.images?.length) return "";
+  const imgs = review.images
+    .map((url) => `<img class="jm-reviews__item-image" src="${escapeHtml(url)}" alt="" loading="lazy">`)
+    .join("");
+  return `<div class="jm-reviews__item-images">${imgs}</div>`;
+}
+
 export function formatReviewDate(createdAt: string | Date): string {
   return new Date(createdAt).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
@@ -103,6 +116,7 @@ function renderItem(template: string, review: AllReviewsItem): string {
     .replaceAll("{{author}}", escapeHtml(authorFor(review)))
     .replaceAll("{{avatar}}", avatarMarkup(review))
     .replaceAll("{{verified}}", verifiedMarkup(review))
+    .replaceAll("{{images}}", imagesMarkup(review))
     .replaceAll("{{date}}", escapeHtml(formatReviewDate(review.createdAt)));
 }
 
@@ -147,6 +161,7 @@ export const DEFAULT_ALL_REVIEWS_HTML = `<div class="jm-reviews-page jm-reviews"
     <div class="jm-reviews__item-stars">{{stars}}</div>
     <div class="jm-reviews__item-title">{{title}}</div>
     <div class="jm-reviews__item-body">{{body}}</div>
+    {{images}}
   </div><!--/ITEM-->
   {{pagination}}
 </div>`;

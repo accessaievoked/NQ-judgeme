@@ -9,10 +9,11 @@ import { bodyBlock } from "./body";
 import { authorBlock } from "./author";
 import { avatarBlock, avatarInitialsTarget } from "./avatar";
 import { verifiedBlock } from "./verified";
+import { imagesBlock } from "./images";
 import { textBlock } from "./text";
 import { containerBlock } from "./container";
 
-export const BLOCK_MODULES = [starsBlock, titleBlock, bodyBlock, authorBlock, avatarBlock, verifiedBlock, textBlock, containerBlock];
+export const BLOCK_MODULES = [starsBlock, titleBlock, bodyBlock, authorBlock, avatarBlock, verifiedBlock, imagesBlock, textBlock, containerBlock];
 
 export function blockModuleFor(type: string) {
   return BLOCK_MODULES.find((b) => b.type === type) || null;
@@ -20,4 +21,4 @@ export function blockModuleFor(type: string) {
 
 export const BLOCKS_DEFAULT_CSS = BLOCK_MODULES.map((b) => b.css).join("\n");
 
-export { starsBlock, titleBlock, bodyBlock, authorBlock, avatarBlock, avatarInitialsTarget, verifiedBlock, textBlock, containerBlock };
+export { starsBlock, titleBlock, bodyBlock, authorBlock, avatarBlock, avatarInitialsTarget, verifiedBlock, imagesBlock, textBlock, containerBlock };

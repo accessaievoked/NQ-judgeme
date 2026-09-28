@@ -1,0 +1,31 @@
+# fly.redis.toml — self-hosted Redis (Dockerfile.redis), its own small Fly
+# app, backing BullMQ for both process groups of the main app (fly.toml's
+# "app" and "worker"). Kept as its OWN app rather than folded in as a third
+# process group of the main app: it's a genuinely different piece of
+# software (not this repo's code) that needs its own persistent volume, and
+# reaching it via plain <app>.internal (ordinary Fly private networking,
+# well-documented) is safer than depending on per-process-group internal DNS
+# syntax. Deployed with `fly deploy --config fly.redis.toml`.
+#
+# No [http_service]/[[services]] block — reachable only over Fly's private
+# 6PN network at nq-judgme-demo-redis.internal:6379 (or whatever you rename
+# `app` to below), never from the public internet. The [[mounts]] volume
+# must exist first: `fly volumes create redis_data --app
+# nq-judgme-demo-redis --region iad --size 1` — Fly won't create it for you
+# on deploy.
+#
+# `app` must be globally unique across all of Fly — rename before deploying.
+app = "nq-judgme-demo-redis"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile.redis"
+
+[[mounts]]
+  source = "redis_data"
+  destination = "/data"
+
+[[vm]]
+  memory = "256mb"
+  cpu_kind = "shared"
+  cpus = 1

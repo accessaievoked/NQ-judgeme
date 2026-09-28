@@ -76,7 +76,10 @@ export const DEFAULT_TEMPLATES: Record<string, { subject: string; bodyHtml: stri
 
 const FALLBACK_TEMPLATE = DEFAULT_TEMPLATES["orders/fulfilled"];
 
-function fillTokens(text: string, tokens: TemplateTokens): string {
+// Exported so a "send test email" feature (app.email-builder.jsx) can fill
+// sample tokens into a trigger's *unsaved* live canvas/raw HTML the same way
+// this does for the real thing, without needing to save first.
+export function fillTokens(text: string, tokens: TemplateTokens): string {
   return text
     .replace(/\{\{\s*customerName\s*\}\}/g, tokens.customerName || "there")
     .replace(/\{\{\s*productTitle\s*\}\}/g, tokens.productTitle)

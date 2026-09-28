@@ -7,7 +7,7 @@
 // are none", so the widget's look can be customized without touching app
 // code:
 //
-//   <!--ITEM--> ... {{stars}} {{title}} {{body}} {{author}} {{avatar}} {{verified}} ... <!--/ITEM-->
+//   <!--ITEM--> ... {{stars}} {{title}} {{body}} {{author}} {{avatar}} {{verified}} {{images}} ... <!--/ITEM-->
 //   <!--EMPTY--> ... <!--/EMPTY-->
 //   <!--MORE--> ... {{moreUrl}} {{moreCount}} ... <!--/MORE-->
 //
@@ -33,6 +33,11 @@ export type WidgetReview = {
   authorName: string | null;
   verifiedBuyer?: boolean;
   customer?: { firstName: string | null; lastName: string | null } | null;
+  // Photo URLs (ReviewImage rows, or a CSV import's "Picture URLs" —
+  // see app.import.jsx) — {{images}} renders them as a thumbnail strip, ""
+  // when there are none, so this is a no-op for every review saved before
+  // review photos existed.
+  images?: string[];
 };
 
 export type WidgetData = {
@@ -87,6 +92,14 @@ function verifiedMarkup(review: WidgetReview): string {
   return review.verifiedBuyer ? `<span class="jm-reviews__item-verified-badge">✓ Verified buyer</span>` : "";
 }
 
+function imagesMarkup(review: WidgetReview): string {
+  if (!review.images?.length) return "";
+  const imgs = review.images
+    .map((url) => `<img class="jm-reviews__item-image" src="${escapeHtml(url)}" alt="" loading="lazy">`)
+    .join("");
+  return `<div class="jm-reviews__item-images">${imgs}</div>`;
+}
+
 // Fixed markup for the inline "click a star, fill in a couple fields,
 // submit — no page navigation" control. jm-widget.js finds it by these
 // class/data names, wires up the click + submit handlers, and POSTs to the
@@ -125,6 +138,7 @@ function renderItem(template: string, review: WidgetReview): string {
     .replaceAll("{{body}}", review.body ? escapeHtml(review.body) : "")
     .replaceAll("{{author}}", escapeHtml(authorFor(review)))
     .replaceAll("{{avatar}}", avatarMarkup(review))
+    .replaceAll("{{images}}", imagesMarkup(review))
     .replaceAll("{{verified}}", verifiedMarkup(review));
 }
 

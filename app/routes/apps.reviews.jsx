@@ -19,7 +19,7 @@ import db from "../db.server";
 import { DEFAULT_WIDGET_HTML, DEFAULT_WIDGET_CSS } from "../reviewWidget/defaults.server";
 import { renderWidgetHtml } from "../reviewWidget/render.server";
 import { compileStyleBlocks } from "../reviewWidget/styleBlocks.server";
-import { getCachedWidget, setCachedWidget, invalidateReviewCache } from "../reviewWidget/reviewCache.server";
+import { invalidateReviewCache } from "../reviewWidget/reviewCache.server";
 
 async function themeFor(shopId) {
   if (!shopId) return { html: DEFAULT_WIDGET_HTML, css: DEFAULT_WIDGET_CSS, styleBlocks: null };
@@ -83,10 +83,6 @@ export const loader = async ({ request }) => {
   });
   if (!product) return respond(await themeFor(shop.id), EMPTY_DATA);
 
-  // Cache paused for now cuz may make changes from shopify will have a trigger with ids too  
-  // const cached = await getCachedWidget(shop.id, product.id);
-  // if (cached) return Response.json(cached);
-
   const [theme, settings] = await Promise.all([
     themeFor(shop.id),
     db.shopSettings.findUnique({ where: { shopId: shop.id }, select: { allReviewsPageUrl: true } }),
@@ -106,6 +102,7 @@ export const loader = async ({ request }) => {
       verifiedBuyer: true,
       createdAt: true,
       customer: { select: { firstName: true, lastName: true } },
+      images: { select: { url: true }, orderBy: { position: "asc" } },
     },
   });
 
@@ -117,11 +114,10 @@ export const loader = async ({ request }) => {
   const payload = buildPayload(theme, {
     count: reviews.length,
     average,
-    reviews,
+    reviews: reviews.map((r) => ({ ...r, images: r.images.map((i) => i.url) })),
     moreUrl,
     productId,
   });
-  // await setCachedWidget(shop.id, product.id, payload);
   return Response.json(payload);
 };
 

@@ -75,7 +75,18 @@ const PREVIEW_DATA = {
   count: 3,
   average: 4.5,
   reviews: [
-    { rating: 5, title: "Love it", body: "Exactly what I needed.", authorName: "Jordan", verifiedBuyer: true, customer: null },
+    {
+      rating: 5,
+      title: "Love it",
+      body: "Exactly what I needed.",
+      authorName: "Jordan",
+      verifiedBuyer: true,
+      customer: null,
+      // A plain inline SVG placeholder — no network fetch needed just to
+      // preview the "Review photos" block (sections/blocks/images.ts) with
+      // something in it.
+      images: [`data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="56" height="56"><rect width="56" height="56" fill="#ddd"/></svg>')}`],
+    },
     { rating: 4, title: "Pretty good", body: "Would buy again.", authorName: null, customer: { firstName: "Sam", lastName: "R." } },
   ],
   moreUrl: "#",
@@ -90,7 +101,7 @@ const ITEM_RE = /<!--ITEM-->([\s\S]*?)<!--\/ITEM-->/;
 // Fixed targets that are really part of the review-item tree (rendered by
 // the dynamic block walker below) — hidden from the "Widget" fixed-target
 // list so each one only shows up once in the sidebar.
-const ITEM_TARGET_VALUES = new Set(["item", "item-stars", "item-title", "item-body", "item-author"]);
+const ITEM_TARGET_VALUES = new Set(["item", "item-stars", "item-title", "item-body", "item-images", "item-author"]);
 // "avatar-initials" isn't browsable on its own — it only exists so the
 // Avatar block's controls can write to it (see sections/blocks/avatar.ts).
 // The "write a review" form page has its own dedicated builder and storage

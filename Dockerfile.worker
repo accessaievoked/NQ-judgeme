@@ -1,0 +1,31 @@
+# Dockerfile.worker — the BullMQ job worker (worker/index.ts), deployed as
+# its own Fly app/machine separate from the web process (Dockerfile) and
+# Redis (Dockerfile.redis). No build step needed here — it runs the
+# TypeScript worker directly via tsx (same as `npm run worker:start`
+# locally), just without that script's --env-file=.env flag: in production
+# Fly injects secrets/env vars straight into the process environment, and
+# there's no .env file in the image at all (see .dockerignore) for
+# --env-file to read.
+FROM node:20-alpine
+RUN apk add --no-cache openssl
+
+WORKDIR /app
+
+ENV NODE_ENV=production
+
+COPY package.json package-lock.json* ./
+
+RUN npm ci --omit=dev && npm cache clean --force
+
+COPY . .
+
+# @prisma/client's postinstall generate step (fired during `npm ci` above)
+# has nothing to generate from yet at that point — prisma/schema.prisma
+# isn't copied in until this COPY . . line, since package.json is copied
+# separately first to let Docker cache the npm ci layer. Generate explicitly
+# now that the schema is present; this is build-time only (reads the schema
+# file, needs no DB connectivity), so it doesn't depend on DATABASE_URL
+# being set at build time.
+RUN npx prisma generate
+
+CMD ["npm", "run", "worker:docker"]

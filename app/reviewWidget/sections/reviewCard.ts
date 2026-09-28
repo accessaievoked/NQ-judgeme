@@ -1,5 +1,5 @@
 import type { SectionModule } from "./types";
-import { starsBlock, titleBlock, bodyBlock, authorBlock } from "./blocks";
+import { starsBlock, titleBlock, bodyBlock, authorBlock, imagesBlock } from "./blocks";
 import { flexLayoutControls, sizeControls, spacingControls, appearanceControls } from "./controls";
 
 // The repeating per-review card, wrapped in <!--ITEM--> markers by
@@ -18,6 +18,7 @@ export const reviewCardSection: SectionModule = {
   ${starsBlock.html("item-stars")}
   ${titleBlock.html("item-title")}
   ${bodyBlock.html("item-body")}
+  ${imagesBlock.html("item-images")}
   ${authorBlock.html("item-author")}
 </div>`,
   // position: relative so any block added inside — in normal flow or given
@@ -40,5 +41,6 @@ export const reviewCardChildTargets: SectionModule[] = [
   { target: "item-stars", label: "Review stars", icon: starsBlock.icon, selector: ".jm-reviews__item-stars", html: null, css: "", controls: starsBlock.controls },
   { target: "item-title", label: "Review title", icon: titleBlock.icon, selector: ".jm-reviews__item-title", html: null, css: "", controls: titleBlock.controls },
   { target: "item-body", label: "Review body text", icon: bodyBlock.icon, selector: ".jm-reviews__item-body", html: null, css: "", controls: bodyBlock.controls },
+  { target: "item-images", label: "Review photos", icon: imagesBlock.icon, selector: ".jm-reviews__item-images-wrap", html: null, css: "", controls: imagesBlock.controls },
   { target: "item-author", label: "Review author name", icon: authorBlock.icon, selector: ".jm-reviews__item-author", html: null, css: "", controls: authorBlock.controls },
 ];

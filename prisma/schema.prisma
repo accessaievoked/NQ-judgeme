@@ -492,14 +492,42 @@ model Review {
   verifiedBuyer   Boolean        @default(true)
   status          ReviewStatus   @default(PENDING)
   hiddenReason    String?
+  // A merchant's public reply, shown alongside the review on the storefront
+  // (same "Reply" affordance the reviews table exposes) — null/repliedAt
+  // unset until first replied to; editing a reply just overwrites `reply`
+  // and bumps `repliedAt`, no reply history is kept.
+  reply           String?
+  repliedAt       DateTime?
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
 
   discount ReviewDiscount?
+  images   ReviewImage[]
 
   @@index([shopId])
   @@index([productId])
   @@index([shopId, status])
+}
+
+// A review's photo(s) — a separate table rather than a single `imageUrl`
+// column on Review (Product's own style) since Judge.me itself allows up to
+// several images per review (its CSV import format's "Picture URLs" column
+// takes up to 5, comma-separated) and a manual add/edit needs the same
+// multi-image support. `position` is display order, not an id — swapping
+// two images' `position` reorders them without touching row identity. No
+// real upload pipeline exists in this app yet (see reviewWidget/sections/
+// controls.ts's "Paste an image URL for now" precedent) — `url` is always a
+// direct link the merchant already has (a CSV import row, or pasted by hand
+// on the manual-add form), same convention as every other image field here.
+model ReviewImage {
+  id        String   @id @default(cuid())
+  reviewId  String
+  review    Review   @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  url       String
+  position  Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([reviewId])
 }
 
 enum ReviewDiscountStatus {

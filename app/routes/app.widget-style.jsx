@@ -23,7 +23,14 @@ const PREVIEW_DATA = {
   count: 3,
   average: 4.5,
   reviews: [
-    { rating: 5, title: "Love it", body: "Exactly what I needed.", authorName: "Jordan", customer: null },
+    {
+      rating: 5,
+      title: "Love it",
+      body: "Exactly what I needed.",
+      authorName: "Jordan",
+      customer: null,
+      images: [`data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="56" height="56"><rect width="56" height="56" fill="#ddd"/></svg>')}`],
+    },
     { rating: 4, title: "Pretty good", body: "Would buy again.", authorName: null, customer: { firstName: "Sam", lastName: "R." } },
   ],
   moreUrl: "#",

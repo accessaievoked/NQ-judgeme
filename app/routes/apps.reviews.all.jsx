@@ -167,12 +167,13 @@ export const loader = async ({ request }) => {
       verifiedBuyer: true,
       createdAt: true,
       customer: { select: { firstName: true, lastName: true } },
+      images: { select: { url: true }, orderBy: { position: "asc" } },
     },
   });
 
   const inner = renderAllReviewsHtml(allReviewsHtml, {
     productTitle: product.title ?? null,
-    reviews,
+    reviews: reviews.map((r) => ({ ...r, images: r.images.map((i) => i.url) })),
     count: total,
     q,
     productId,
