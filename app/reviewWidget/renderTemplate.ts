@@ -21,7 +21,10 @@
 // <!--MORE--> renders only when the caller passed fewer `reviews` than the
 // real `count` (apps.reviews.jsx only sends the first page's worth inline)
 // and set `moreUrl` — the link to the full, paginated /apps/reviews/all
-// page. {{moreCount}} is how many aren't shown inline.
+// page. {{moreCount}} is how many aren't shown inline. ensureMoreBlock
+// (sections/moreLink.ts) runs first so a shop's saved template that
+// predates this block existing still gets it — see that function's comment.
+import { ensureMoreBlock } from "./sections/moreLink";
 
 export type WidgetReview = {
   rating: number;
@@ -126,6 +129,7 @@ function renderItem(template: string, review: WidgetReview): string {
 }
 
 export function renderWidgetHtml(template: string, data: WidgetData): string {
+  template = ensureMoreBlock(template);
   const empty = extractBlock(template, "EMPTY");
   let out = empty.withoutMarkers(data.count === 0, empty.content);
 

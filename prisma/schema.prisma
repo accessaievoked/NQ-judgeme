@@ -64,6 +64,7 @@ model Shop {
   settings           ShopSettings?
   widgetTheme        WidgetTheme?
   reviewFormTheme    ReviewFormTheme?
+  allReviewsTheme    AllReviewsTheme?
   ratingSummaryTheme RatingSummaryTheme?
   emailLayouts       EmailLayout[]
   products           Product[]
@@ -157,6 +158,33 @@ model WidgetTheme {
 // app.widget-editor/app.widget-style, which only ever touch WidgetTheme (the
 // read-only list widget).
 model ReviewFormTheme {
+  id          String   @id @default(cuid())
+  shopId      String   @unique
+  shop        Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  html        String
+  css         String
+  styleBlocks Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// The "all reviews" page/fragment's markup+styling
+// (routes/apps.reviews.all.jsx + extensions/theme-widget/blocks/all-reviews.liquid),
+// per shop — same pattern as WidgetTheme/ReviewFormTheme but for the
+// paginated/searchable full reviews page instead of the inline widget or the
+// write-a-review form. No row = use the hardcoded defaults in
+// reviewWidget/allReviewsTemplate.ts. `html` supports the
+// {{heading}}/{{count}}/{{reviewWord}}/{{searchQuery}}/{{productId}}/{{pagination}}
+// tokens plus <!--ITEM-->...<!--/ITEM--> (one review) and
+// <!--EMPTY-->...<!--/EMPTY--> marker blocks (see that file for the full
+// list); `css` is injected as-is, same as WidgetTheme.css. `styleBlocks`
+// reuses the exact same {target, property, value} shape/compiler as
+// WidgetTheme (reviewWidget/styleBlocks.server.ts's pattern) — targets are
+// the "allReviews*" entries in reviewWidget/sections/allReviews.ts. Edited
+// from its own dedicated builder (/app/review-all-editor) — never from
+// app.widget-editor/app.widget-style, which only ever touch WidgetTheme (the
+// inline widget).
+model AllReviewsTheme {
   id          String   @id @default(cuid())
   shopId      String   @unique
   shop        Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)

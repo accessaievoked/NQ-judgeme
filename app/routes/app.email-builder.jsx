@@ -13,13 +13,22 @@
 // don't support position:absolute — see that file's header comment) rather
 // than shipping the canvas positions as-is; only compiled html/subject ever
 // get sent, the canvas `elements` array is editor state that round-trips
-// through EmailLayout.elements. "Raw HTML" mode — a completely separate
-// page state, not a tab inside this same form — bypasses the canvas
-// entirely, same split as app.widget-editor.jsx (visual) vs
-// app.widget-style.jsx (raw).
+// through EmailLayout.elements. "Raw HTML" mode is a tab inside this same
+// form (see TriggerEditor) that bypasses the canvas entirely, same split as
+// app.widget-editor.jsx (visual) vs app.widget-style.jsx (raw) — just one
+// page instead of two, since there's no separate "raw code" page here to
+// mirror.
 //
-// A trigger resolves through EmailLayout (this page) before EmailTemplate
-// (app.email-templates.jsx) — see templates.server.ts's resolveTemplate.
+// The single editor for every trigger now (the older flow-layout/rich-text
+// page, app.email-templates.jsx, and its EmailTemplate table, are gone) — a
+// trigger resolves through EmailLayout (this page) first, and only falls
+// back to any EmailTemplate row a shop saved back when that older page still
+// existed (see templates.server.ts's resolveTemplate). buildState below
+// seeds a trigger's very first visit here from that legacy row (into Raw
+// HTML mode, subject + bodyHtml carried over as-is) instead of silently
+// discarding a shop's existing customization the moment that page's own UI
+// disappeared — once Saved here, the new EmailLayout row always wins and
+// that seeding never runs again for this trigger.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useFetcher, useLoaderData } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
@@ -53,14 +62,20 @@ function defaultElements(triggerType) {
   ];
 }
 
-function buildState(layout, triggerType) {
+// `legacyTemplate` is a shop's EmailTemplate row from the now-removed
+// classic editor, if one exists — only consulted when there's no
+// EmailLayout yet (a trigger this shop has never opened here since the
+// merge). Free-form rich-text/raw HTML can't be safely decomposed into
+// positioned canvas boxes, so it seeds Raw HTML mode, not the canvas.
+function buildState(layout, triggerType, legacyTemplate) {
   const elements = Array.isArray(layout?.elements) && layout.elements.length ? layout.elements : defaultElements(triggerType);
+  const seedFromLegacy = !layout && Boolean(legacyTemplate);
   return {
     triggerType,
-    mode: layout?.mode ?? "canvas",
-    subject: layout?.subject ?? DEFAULT_TEMPLATES[triggerType]?.subject ?? "",
+    mode: layout?.mode ?? (seedFromLegacy ? "html" : "canvas"),
+    subject: layout?.subject ?? legacyTemplate?.subject ?? DEFAULT_TEMPLATES[triggerType]?.subject ?? "",
     elements,
-    rawHtml: layout?.rawHtml ?? "",
+    rawHtml: layout?.rawHtml ?? (seedFromLegacy ? legacyTemplate.bodyHtml : ""),
     canvasWidth: layout?.canvasWidth ?? DEFAULT_CANVAS_WIDTH,
     isCustom: Boolean(layout),
   };
@@ -75,10 +90,19 @@ export const loader = async ({ request }) => {
     return { shopId: null, layouts: triggerTypes.map((t) => buildState(null, t)) };
   }
 
-  const saved = await db.emailLayout.findMany({ where: { shopId: shop.id } });
+  const [savedLayouts, legacyTemplates] = await Promise.all([
+    db.emailLayout.findMany({ where: { shopId: shop.id } }),
+    db.emailTemplate.findMany({ where: { shopId: shop.id } }),
+  ]);
   return {
     shopId: shop.id,
-    layouts: triggerTypes.map((t) => buildState(saved.find((l) => l.triggerType === t), t)),
+    layouts: triggerTypes.map((t) =>
+      buildState(
+        savedLayouts.find((l) => l.triggerType === t),
+        t,
+        legacyTemplates.find((tpl) => tpl.triggerType === t),
+      ),
+    ),
   };
 };
 
@@ -127,7 +151,14 @@ export const action = async ({ request }) => {
 const ELEMENT_DEFAULTS = {
   text: { width: 200, height: 28, text: "New text", fontSize: 15, bold: false, underline: false, color: "#1a1a1a", background: "transparent", textAlign: "left", padding: 4, borderRadius: 0, isLink: false, linkColor: "#1a56db" },
   image: { width: 160, height: 120, src: "https://cdn.shopify.com/s/files/1/placeholder.png", href: "", background: "transparent", borderRadius: 0 },
-  button: { width: 160, height: 44, text: "Click here", href: "{{reviewUrl}}", fontSize: 14, bold: true, underline: false, color: "#ffffff", background: "#1a1a1a", textAlign: "center", padding: 10, borderRadius: 6 },
+  button: { width: 160, height: 44, text: "Click here", href: "{{reviewUrl}}", fontSize: 14, bold: true, underline: false, color: "#ffffff", background: "#1a1a1a", textAlign: "center", padding: 10, borderRadius: 6, icon: "", iconPosition: "left" },
+  // A plain background/border box — drop it behind a group of other
+  // elements (Send to back) to visually group them into a card/panel, same
+  // "div wrapper" role a <section> plays in real HTML. No text of its own.
+  section: { width: 400, height: 100, background: "#f6f6f7", borderRadius: 8 },
+  // A thin colored rule — `background` is the line color, `height` its
+  // thickness, reusing fields every other element already has.
+  divider: { width: 400, height: 2, background: "#e1e1e1" },
 };
 
 // Runs inside the iframe. Kept as a plain string (not a module) since it's
@@ -159,10 +190,21 @@ const EDITOR_SCRIPT = `
       style += 'background:' + (el.background || 'transparent') + ';';
       return '<div class="jm-email-el" data-email-el="' + el.id + '" style="' + style + '"><img src="' + esc(el.src || '') + '" style="width:100%;height:100%;object-fit:cover;pointer-events:none;display:block;" /></div>';
     }
+    if (el.type === 'section') {
+      style += 'background:' + (el.background || '#f6f6f7') + ';box-shadow:inset 0 0 0 1px rgba(0,0,0,0.06);';
+      return '<div class="jm-email-el" data-email-el="' + el.id + '" style="' + style + '"></div>';
+    }
+    if (el.type === 'divider') {
+      style += 'background:' + (el.background && el.background !== 'transparent' ? el.background : '#e1e1e1') + ';';
+      return '<div class="jm-email-el" data-email-el="' + el.id + '" style="' + style + '"></div>';
+    }
     if (el.type === 'button') {
       var justify = el.textAlign === 'center' ? 'center' : el.textAlign === 'right' ? 'flex-end' : 'flex-start';
-      style += 'display:flex;align-items:center;justify-content:' + justify + ';background:' + (el.background || '#1a1a1a') + ';color:' + (el.color || '#ffffff') + ';';
-      return '<div class="jm-email-el" data-email-el="' + el.id + '" style="' + style + '">' + esc(el.text || 'Click here') + '</div>';
+      style += 'display:flex;align-items:center;justify-content:' + justify + ';gap:6px;background:' + (el.background || '#1a1a1a') + ';color:' + (el.color || '#ffffff') + ';';
+      var iconSpan = el.icon ? '<span>' + esc(el.icon) + '</span>' : '';
+      var label = '<span>' + esc(el.text || 'Click here') + '</span>';
+      var inner = el.iconPosition === 'right' ? label + iconSpan : iconSpan + label;
+      return '<div class="jm-email-el" data-email-el="' + el.id + '" style="' + style + '">' + inner + '</div>';
     }
     var textColor = el.isLink ? (el.linkColor || el.color || '#1a1a1a') : (el.color || '#1a1a1a');
     style += 'background:' + (el.background || 'transparent') + ';color:' + textColor + ';';
@@ -264,7 +306,7 @@ function buildSrcDoc(elements, canvasWidth) {
 // to a different element's values on every canvas selection, and Polaris
 // web components' controlled-value updates aren't reliably first-party
 // outside the real embedded admin runtime.
-function Field({ label, value, placeholder, onChange, hideLabel, type = "text", min, max, step }) {
+function Field({ label, value, placeholder, onChange, onBlur, hideLabel, type = "text", min, max, step }) {
   return (
     <label className="jm-field">
       {!hideLabel ? <span className="jm-field__label">{label}</span> : null}
@@ -277,6 +319,7 @@ function Field({ label, value, placeholder, onChange, hideLabel, type = "text", 
         value={value ?? ""}
         placeholder={placeholder}
         onChange={(e) => onChange(type === "number" ? Number(e.target.value) : e.target.value)}
+        onBlur={onBlur}
         aria-label={hideLabel ? label : undefined}
       />
     </label>
@@ -352,7 +395,10 @@ function ElementSettings({ element, onChange, onDelete, onBringToFront, onSendTo
   }
 
   const set = (patch) => onChange(element.id, patch);
-  const typeLabel = element.type === "text" ? "📝 Text" : element.type === "image" ? "🖼 Image" : "🔘 Button";
+  const TYPE_LABELS = { text: "Text", image: "Image", button: "Button", section: "Section", divider: "Divider" };
+  const typeLabel = `${ELEMENT_ICONS[element.type] ?? "🔘"} ${TYPE_LABELS[element.type] ?? "Button"}`;
+  const hasText = element.type === "text" || element.type === "button";
+  const hasTypography = hasText;
 
   return (
     <s-section heading={`Settings — ${typeLabel}`}>
@@ -374,13 +420,39 @@ function ElementSettings({ element, onChange, onDelete, onBringToFront, onSendTo
             <Field label="Image URL" value={element.src} placeholder="https://..." onChange={(v) => set({ src: v })} />
             <Field label="Link URL (optional)" value={element.href} placeholder="https://... or {{reviewUrl}}" onChange={(v) => set({ href: v })} />
           </SettingsGroup>
-        ) : (
+        ) : null}
+
+        {element.type === "section" ? (
+          <SettingsGroup heading="Section">
+            <HelpTextRow text="A plain background box — put it behind a group of other elements (Send to back) to visually group them into a card/panel." />
+          </SettingsGroup>
+        ) : null}
+
+        {element.type === "divider" ? (
+          <SettingsGroup heading="Divider">
+            <HelpTextRow text="A thin line — use Background below for its color and Height above for its thickness." />
+          </SettingsGroup>
+        ) : null}
+
+        {hasText ? (
           <SettingsGroup heading="Content">
             <Field label={element.type === "button" ? "Button text" : "Text"} value={element.text} onChange={(v) => set({ text: v })} />
           </SettingsGroup>
-        )}
+        ) : null}
 
-        {element.type !== "image" ? (
+        {element.type === "button" ? (
+          <SettingsGroup heading="Icon">
+            <Field label="Icon (emoji or symbol, optional)" value={element.icon} placeholder="e.g. → ✓ 🛒" onChange={(v) => set({ icon: v })} />
+            <NativeSelect
+              label="Icon position"
+              value={element.iconPosition ?? "left"}
+              options={[{ value: "left", label: "Left of text" }, { value: "right", label: "Right of text" }]}
+              onChange={(v) => set({ iconPosition: v })}
+            />
+          </SettingsGroup>
+        ) : null}
+
+        {hasTypography ? (
           <SettingsGroup heading="Typography">
             <s-stack direction="inline" gap="tight">
               <Field label="Font size" type="number" min={8} max={72} value={element.fontSize} onChange={(v) => set({ fontSize: v })} />
@@ -390,7 +462,7 @@ function ElementSettings({ element, onChange, onDelete, onBringToFront, onSendTo
               <Toggle label="Bold" checked={Boolean(element.bold)} onChange={(v) => set({ bold: v })} />
               <Toggle label="Underline" checked={Boolean(element.underline)} onChange={(v) => set({ underline: v })} />
             </s-stack>
-            <ColorField label={element.type === "button" ? "Text color" : "Text color"} value={element.color} onChange={(v) => set({ color: v })} />
+            <ColorField label="Text color" value={element.color} onChange={(v) => set({ color: v })} />
           </SettingsGroup>
         ) : null}
 
@@ -414,10 +486,12 @@ function ElementSettings({ element, onChange, onDelete, onBringToFront, onSendTo
 
         <SettingsGroup heading="Background & spacing">
           <ColorField label="Background" value={element.background} onChange={(v) => set({ background: v })} />
-          <s-stack direction="inline" gap="tight">
-            <Field label="Padding" type="number" min={0} value={element.padding ?? 0} onChange={(v) => set({ padding: v })} />
-            <Field label="Corner rounding" type="number" min={0} value={element.borderRadius ?? 0} onChange={(v) => set({ borderRadius: v })} />
-          </s-stack>
+          {element.type !== "divider" ? (
+            <s-stack direction="inline" gap="tight">
+              <Field label="Padding" type="number" min={0} value={element.padding ?? 0} onChange={(v) => set({ padding: v })} />
+              <Field label="Corner rounding" type="number" min={0} value={element.borderRadius ?? 0} onChange={(v) => set({ borderRadius: v })} />
+            </s-stack>
+          ) : null}
         </SettingsGroup>
 
         <SettingsGroup heading="Advanced">
@@ -470,6 +544,15 @@ const EDITOR_CHROME_CSS = `
   .jm-palette-item:hover { background: #f6f6f7; border-color: #ccc; }
 `;
 
+const ELEMENT_ICONS = { text: "📝", image: "🖼", button: "🔘", section: "▭", divider: "➖" };
+
+function elementListLabel(el) {
+  if (el.type === "text" || el.type === "button") return (el.text || (el.type === "button" ? "Button" : "Text")).slice(0, 24);
+  if (el.type === "section") return "Section";
+  if (el.type === "divider") return "Divider";
+  return "Image";
+}
+
 function ElementList({ elements, selectedId, onSelect, onDelete }) {
   return (
     <s-section heading="Elements">
@@ -479,7 +562,7 @@ function ElementList({ elements, selectedId, onSelect, onDelete }) {
           <div key={el.id} className="jm-list-item">
             <s-stack direction="inline" gap="tight" style={{ alignItems: "center" }}>
               <s-button variant={el.id === selectedId ? "primary" : "tertiary"} onClick={() => onSelect(el.id)}>
-                {el.type === "text" ? "📝" : el.type === "image" ? "🖼" : "🔘"} {el.type === "text" ? (el.text || "Text").slice(0, 24) : el.type === "button" ? (el.text || "Button").slice(0, 24) : "Image"}
+                {ELEMENT_ICONS[el.type] ?? "🔘"} {elementListLabel(el)}
               </s-button>
               <s-button variant="tertiary" onClick={() => onDelete(el.id)}>Delete</s-button>
             </s-stack>
@@ -534,7 +617,10 @@ function CanvasEditor({ initial, triggerType, fetcher }) {
   function addElement(type) {
     const id = newElementId(type);
     const el = { id, type, x: 20, y: 20, ...ELEMENT_DEFAULTS[type] };
-    setElements((prev) => [...prev, el]);
+    // A section is a background box, meant to sit behind other elements, so
+    // it's added at the back of the stack (same array position Send to back
+    // moves an existing element to) instead of on top, covering everything.
+    setElements((prev) => (type === "section" ? [el, ...prev] : [...prev, el]));
     setSelectedId(id);
   }
 
@@ -588,6 +674,8 @@ function CanvasEditor({ initial, triggerType, fetcher }) {
               <button type="button" className="jm-palette-item" onClick={() => addElement("text")}>📝 Text</button>
               <button type="button" className="jm-palette-item" onClick={() => addElement("image")}>🖼 Image</button>
               <button type="button" className="jm-palette-item" onClick={() => addElement("button")}>🔘 Button (link)</button>
+              <button type="button" className="jm-palette-item" onClick={() => addElement("section")}>▭ Section (div)</button>
+              <button type="button" className="jm-palette-item" onClick={() => addElement("divider")}>➖ Divider</button>
             </s-stack>
           </s-section>
           <div style={{ marginTop: 16 }}>
@@ -598,7 +686,22 @@ function CanvasEditor({ initial, triggerType, fetcher }) {
         <div style={{ flex: "1 1 34%", minWidth: 280 }}>
           <s-section heading="Preview (click to select, drag to move)">
             <div style={{ marginBottom: 8 }}>
-              <Field label="Canvas width" type="number" min={280} max={800} value={canvasWidth} onChange={(v) => setCanvasWidth(Math.min(Math.max(v || 0, 280), 800))} />
+              {/* No live clamp on every keystroke — that used to snap the
+                  value back mid-typing (e.g. clearing the field to type
+                  "500" instantly reset to 280 after the first digit),
+                  making it effectively impossible to type a new width. Any
+                  number is accepted while typing; it's only clamped to
+                  280–800 on blur and again on Save (see submit()) so the
+                  compiled email/preview never gets a nonsensical width. */}
+              <Field
+                label="Canvas width"
+                type="number"
+                min={280}
+                max={800}
+                value={canvasWidth}
+                onChange={setCanvasWidth}
+                onBlur={() => setCanvasWidth((w) => Math.min(Math.max(Number(w) || DEFAULT_CANVAS_WIDTH, 280), 800))}
+              />
             </div>
             <div style={{ border: "1px solid #ddd", borderRadius: 8, overflow: "hidden" }}>
               <iframe ref={iframeRef} title="Email preview" srcDoc={srcDoc} style={{ width: "100%", height: 420, border: "0", display: "block" }} />
@@ -730,8 +833,8 @@ export default function EmailBuilder() {
         per-element color, size, bold/underline, and link styling, exactly
         like the review widget builder. On save this compiles to table-based
         HTML that actually renders correctly in real inboxes (Outlook and
-        friends don&apos;t support free-position CSS). Prefer a plain flow-layout
-        editor instead? <s-link href="/app/email-templates">Use the classic editor</s-link>.
+        friends don&apos;t support free-position CSS). Prefer to write the whole
+        email by hand instead? Switch a trigger below to <strong>Raw HTML</strong>.
       </s-paragraph>
       {layouts.map((layout) => (
         <TriggerEditor key={layout.triggerType} initial={layout} />

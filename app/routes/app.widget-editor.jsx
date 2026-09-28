@@ -59,19 +59,26 @@ import { TARGETS, PROPERTIES, TARGET_ICONS } from "../reviewWidget/styleCatalog"
 import { BLOCK_TYPES, blockTypeFor } from "../reviewWidget/blockTypes";
 import { controlsForTarget, controlsForBlockType } from "../reviewWidget/sections/index";
 import { SIZE_UNITS, parseSizeValue, formatSizeValue, parseBoxValue, formatBoxValue } from "../reviewWidget/sections/controls";
+import { ensureMoreBlock } from "../reviewWidget/sections/moreLink";
 import { invalidateShopReviewCache } from "../reviewWidget/reviewCache.server";
 
 // Two sample reviews, both rendered in the preview (renderWidgetHtml maps
 // the same <!--ITEM--> template over every review, so editing the one
 // template updates both cards here exactly like it would with real reviews)
 // so list/grid layout changes on the "list" wrapper are visible immediately.
+// `count` is deliberately one more than `reviews.length`, with `moreUrl` set
+// — same "more reviews exist than fit inline" condition renderWidgetHtml's
+// <!--MORE--> handling checks for on a real storefront — so the "Show more
+// link" section (moreLink.ts) actually renders here and is click-selectable/
+// stylable, instead of only ever existing in the sidebar's fixed-target list.
 const PREVIEW_DATA = {
-  count: 2,
+  count: 3,
   average: 4.5,
   reviews: [
     { rating: 5, title: "Love it", body: "Exactly what I needed.", authorName: "Jordan", verifiedBuyer: true, customer: null },
     { rating: 4, title: "Pretty good", body: "Would buy again.", authorName: null, customer: { firstName: "Sam", lastName: "R." } },
   ],
+  moreUrl: "#",
 };
 
 // A "no reviews yet" scenario, so the empty-state text/styling is just as
@@ -108,7 +115,11 @@ export const loader = async ({ request }) => {
   const shop = await db.shop.findUnique({ where: { domain: session.shop } });
   const theme = shop ? await db.widgetTheme.findUnique({ where: { shopId: shop.id } }) : null;
   return {
-    html: theme?.html ?? DEFAULT_WIDGET_HTML,
+    // ensureMoreBlock self-heals a shop's saved html from before the "Show
+    // more" link had its own <!--MORE--> block (see that function's
+    // comment) — without this, this editor's content-editing/click-to-select
+    // for it would have nothing in baseHtml to find.
+    html: ensureMoreBlock(theme?.html ?? DEFAULT_WIDGET_HTML),
     css: theme?.css ?? DEFAULT_WIDGET_CSS,
     styleBlocks: Array.isArray(theme?.styleBlocks) ? theme.styleBlocks : [],
     isCustom: Boolean(theme),
@@ -129,7 +140,7 @@ export const action = async ({ request }) => {
     return { ok: true, intent, html: DEFAULT_WIDGET_HTML, css: DEFAULT_WIDGET_CSS, styleBlocks: [], isCustom: false };
   }
 
-  const html = String(formData.get("html") || "").slice(0, 20000);
+  const html = ensureMoreBlock(String(formData.get("html") || "").slice(0, 20000));
   const css = String(formData.get("css") || "").slice(0, 20000);
   let styleBlocks = [];
   try {

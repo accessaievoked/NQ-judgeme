@@ -1,6 +1,6 @@
 // app/routes/app.rating-summary-editor.jsx — admin builder for the
 // storefront "star rating + review count" summary badge (RatingSummaryTheme).
-// Two modes, exactly like app.email-templates.jsx's Normal/Raw-HTML split:
+// Two modes, exactly like app.email-builder.jsx's Canvas/Raw-HTML split:
 // "Blocks" is a handful of point-and-click controls (colors, size,
 // alignment, show/hide the count text) that get compiled into html/css on
 // save; "Raw HTML/CSS" hands full control of the markup to the merchant.

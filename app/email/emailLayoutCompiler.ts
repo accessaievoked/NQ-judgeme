@@ -18,7 +18,13 @@
 // band-order the compiler picked — the canvas editor warns about this.
 export type EmailElement = {
   id: string;
-  type: "text" | "image" | "button";
+  // "section" is a plain background/border box — a "div" a merchant drops
+  // behind a group of other elements (send-to-back already puts it under
+  // them) to visually group them into a card/panel; it has no text of its
+  // own. "divider" is a thin colored rule — `background` is its line color,
+  // `height` its thickness, same fields every other element already has, no
+  // new properties needed.
+  type: "text" | "image" | "button" | "section" | "divider";
   x: number;
   y: number;
   width: number;
@@ -39,6 +45,13 @@ export type EmailElement = {
   // separate toggle needed there since there's no non-link "look" to lose).
   isLink?: boolean;
   linkColor?: string;
+  // Button blocks only — a short glyph (emoji or unicode symbol, e.g. "→",
+  // "✓", "🛒") shown beside the button text. Plain text, not an image, so
+  // it survives every email client with zero extra requests/broken-image
+  // risk, same reasoning avatar initials use over a real avatar image
+  // elsewhere in this app.
+  icon?: string;
+  iconPosition?: "left" | "right";
   // Raw CSS declarations appended last, same escape-hatch role as the
   // widget editor's "Advanced: custom CSS properties" section — e.g.
   // "letter-spacing:1px;". Sanitized the same way styleCompiler.ts's
@@ -81,11 +94,22 @@ function elementInnerHtml(el: EmailElement): string {
     return el.href ? `<a href="${el.href}" style="text-decoration:none;">${img}</a>` : img;
   }
 
+  if (el.type === "section") {
+    return `<div style="width:${el.width}px;height:${el.height}px;background:${background};border-radius:${borderRadius}px;${custom}"></div>`;
+  }
+
+  if (el.type === "divider") {
+    return `<div style="width:${el.width}px;height:${el.height}px;background:${background === "transparent" ? "#e1e1e1" : background};font-size:1px;line-height:1px;${custom}">&nbsp;</div>`;
+  }
+
   if (el.type === "button") {
     const btnColor = color === "#1a1a1a" ? "#ffffff" : color;
+    const iconHtml = el.icon ? `<span style="${el.iconPosition === "right" ? "margin-left" : "margin-right"}:6px;">${escapeHtml(el.icon)}</span>` : "";
+    const label = escapeHtml(el.text ?? "Click here");
+    const labelHtml = el.iconPosition === "right" ? `${label}${iconHtml}` : `${iconHtml}${label}`;
     return `<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
       <td align="center" bgcolor="${background === "transparent" ? "#1a1a1a" : background}" style="border-radius:${borderRadius}px;">
-        <a href="${el.href ?? "#"}" style="display:inline-block;padding:${padding}px ${padding * 2}px;font-size:${fontSize}px;font-weight:${fontWeight};text-decoration:${textDecorationFor(el)};color:${btnColor};${custom}">${escapeHtml(el.text ?? "Click here")}</a>
+        <a href="${el.href ?? "#"}" style="display:inline-block;padding:${padding}px ${padding * 2}px;font-size:${fontSize}px;font-weight:${fontWeight};text-decoration:${textDecorationFor(el)};color:${btnColor};${custom}">${labelHtml}</a>
       </td>
     </tr></table>`;
   }

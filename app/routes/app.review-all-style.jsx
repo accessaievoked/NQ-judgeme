@@ -1,42 +1,37 @@
-// app/routes/app.widget-style.jsx — raw HTML/CSS "coder mode" for the
-// storefront review widget (WidgetTheme), for merchants who want full
-// control of the template. Point-and-click styling (including the style
-// blocks this page used to let you build with dropdowns) now lives in the
-// visual editor at /app/widget-editor — this page just edits the underlying
-// template those blocks compile onto, plus a preview of the saved result.
+// app/routes/app.review-all-style.jsx — raw HTML/CSS "coder mode" for the
+// paginated/searchable "all reviews" page (AllReviewsTheme), for merchants
+// who want full control of the template. Point-and-click styling lives in
+// the visual editor at /app/review-all-editor — this page just edits the
+// underlying template those blocks compile onto, plus a preview of the
+// saved result. Exact mirror of app.review-form-style.jsx's split from
+// app.review-form-editor.jsx, just for AllReviewsTheme/the all-reviews page
+// instead of ReviewFormTheme/the write-a-review page.
 import { useFetcher, useLoaderData } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
-import { DEFAULT_WIDGET_HTML, DEFAULT_WIDGET_CSS } from "../reviewWidget/defaults.server";
-import { renderWidgetHtml } from "../reviewWidget/render.server";
-import { compileStyleBlocks } from "../reviewWidget/styleBlocks.server";
-import { ensureMoreBlock } from "../reviewWidget/sections/moreLink";
+import { DEFAULT_ALL_REVIEWS_HTML, renderAllReviewsHtml } from "../reviewWidget/allReviewsTemplate";
+import { ALL_REVIEWS_DEFAULT_CSS } from "../reviewWidget/sections/allReviewsPage";
+import { compileAllReviewsStyleBlocks } from "../reviewWidget/allReviewsStyleCompiler";
 import { invalidateShopReviewCache } from "../reviewWidget/reviewCache.server";
 
-// `count` is one more than `reviews.length`, with `moreUrl` set, so the
-// "Show more" link actually renders in this preview too (renderWidgetHtml
-// only emits it when there are more reviews than shown inline) — see
-// app.widget-editor.jsx's PREVIEW_DATA for the same reasoning.
 const PREVIEW_DATA = {
-  count: 3,
-  average: 4.5,
+  productTitle: "Sample Product",
+  count: 2,
+  q: "",
+  productId: "123456",
+  paginationHtml: `<nav class="jm-reviews-page__pagination" aria-label="Reviews pages"><span class="jm-reviews-page__num is-current">1</span><a class="jm-reviews-page__num" href="#">2</a><a class="jm-reviews-page__nav" href="#">Next ›</a></nav>`,
   reviews: [
-    { rating: 5, title: "Love it", body: "Exactly what I needed.", authorName: "Jordan", customer: null },
-    { rating: 4, title: "Pretty good", body: "Would buy again.", authorName: null, customer: { firstName: "Sam", lastName: "R." } },
+    { rating: 5, title: "Love it", body: "Exactly what I needed.", authorName: "Jordan", customer: null, createdAt: new Date() },
+    { rating: 4, title: "Pretty good", body: "Would buy again.", authorName: null, customer: { firstName: "Sam", lastName: "R." }, createdAt: new Date() },
   ],
-  moreUrl: "#",
 };
 
 function buildState(theme) {
   return {
-    // ensureMoreBlock self-heals a shop's saved html from before the "Show
-    // more" link had its own <!--MORE--> block — shown right in this raw
-    // textarea (not just invisibly patched at render time) so a merchant
-    // editing here sees the same markup that's actually live.
-    html: ensureMoreBlock(theme?.html ?? DEFAULT_WIDGET_HTML),
-    css: theme?.css ?? DEFAULT_WIDGET_CSS,
+    html: theme?.html ?? DEFAULT_ALL_REVIEWS_HTML,
+    css: theme?.css ?? ALL_REVIEWS_DEFAULT_CSS,
     styleBlocks: Array.isArray(theme?.styleBlocks) ? theme.styleBlocks : [],
     isCustom: Boolean(theme),
   };
@@ -44,8 +39,8 @@ function buildState(theme) {
 
 function withPreview(state) {
   try {
-    const previewCss = [state.css, compileStyleBlocks(state.styleBlocks)].filter(Boolean).join("\n\n");
-    return { ...state, previewHtml: renderWidgetHtml(state.html, PREVIEW_DATA), previewCss, previewError: "" };
+    const previewCss = [state.css, compileAllReviewsStyleBlocks(state.styleBlocks)].filter(Boolean).join("\n\n");
+    return { ...state, previewHtml: renderAllReviewsHtml(state.html, PREVIEW_DATA), previewCss, previewError: "" };
   } catch (err) {
     return { ...state, previewHtml: "", previewCss: state.css, previewError: String(err?.message || err) };
   }
@@ -56,7 +51,7 @@ export const loader = async ({ request }) => {
   const shop = await db.shop.findUnique({ where: { domain: session.shop } });
   if (!shop) return withPreview(buildState(null));
 
-  const theme = await db.widgetTheme.findUnique({ where: { shopId: shop.id } });
+  const theme = await db.allReviewsTheme.findUnique({ where: { shopId: shop.id } });
   return withPreview(buildState(theme));
 };
 
@@ -69,17 +64,17 @@ export const action = async ({ request }) => {
   const intent = formData.get("intent");
 
   if (intent === "reset") {
-    await db.widgetTheme.deleteMany({ where: { shopId: shop.id } });
+    await db.allReviewsTheme.deleteMany({ where: { shopId: shop.id } });
     await invalidateShopReviewCache(shop.id);
     return { ok: true, intent, ...withPreview(buildState(null)) };
   }
 
-  const html = ensureMoreBlock(String(formData.get("html") || "").slice(0, 20000));
+  const html = String(formData.get("html") || "").slice(0, 20000);
   const css = String(formData.get("css") || "").slice(0, 20000);
 
-  const theme = await db.widgetTheme.upsert({
+  const theme = await db.allReviewsTheme.upsert({
     where: { shopId: shop.id },
-    create: { shopId: shop.id, html, css },
+    create: { shopId: shop.id, html, css, styleBlocks: [] },
     update: { html, css },
   });
   await invalidateShopReviewCache(shop.id);
@@ -91,8 +86,8 @@ function TemplateForm({ state }) {
   const fetcher = useFetcher();
   const shopify = useAppBridge();
 
-  if (fetcher.data?.ok && fetcher.data.intent === "save") shopify.toast.show("Widget style saved");
-  if (fetcher.data?.ok && fetcher.data.intent === "reset") shopify.toast.show("Widget style reset to default");
+  if (fetcher.data?.ok && fetcher.data.intent === "save") shopify.toast.show("All reviews page template saved");
+  if (fetcher.data?.ok && fetcher.data.intent === "reset") shopify.toast.show("All reviews page reset to default");
 
   const html = fetcher.data?.html ?? state.html;
   const css = fetcher.data?.css ?? state.css;
@@ -101,13 +96,14 @@ function TemplateForm({ state }) {
   return (
     <s-section heading="Template (raw HTML/CSS)">
       <s-paragraph>
-        Full control of the widget's markup. <code>{"<!--ITEM--> <!--/ITEM-->"}</code>{" "}
+        Full control of the page&apos;s markup. <code>{"<!--ITEM--> <!--/ITEM-->"}</code>{" "}
         marks the per-review block, <code>{"<!--EMPTY--> <!--/EMPTY-->"}</code>{" "}
-        the no-reviews state. Tokens: <code>{"{{stars}} {{title}} {{body}} {{author}}"}</code>{" "}
-        inside an item, <code>{"{{averageStars}} {{averageValue}} {{count}} {{reviewWord}}"}</code>{" "}
-        outside it, <code>{"{{rateWidget}}"}</code> anywhere. Prefer clicking
-        and styling instead? Use the{" "}
-        <s-link href="/app/widget-editor">visual widget builder</s-link>.
+        the no-results state. Tokens: <code>{"{{stars}} {{title}} {{body}} {{author}} {{avatar}} {{verified}} {{date}}"}</code>{" "}
+        inside an item, <code>{"{{heading}} {{count}} {{reviewWord}} {{searchQuerySuffix}} {{searchQuery}} {{productId}} {{pagination}}"}</code>{" "}
+        outside it. Keep <code>data-jm-reviews-all-search</code> on the search{" "}
+        <code>form</code> intact — the fetch-based search behavior is wired up by
+        that fixed name, not by a token. Prefer clicking and styling instead?
+        Use the <s-link href="/app/review-all-editor">visual all-reviews builder</s-link>.
       </s-paragraph>
 
       <fetcher.Form method="POST">
@@ -124,7 +120,7 @@ function TemplateForm({ state }) {
                 name="intent"
                 value="reset"
                 onClick={(e) => {
-                  if (!confirm("Reset to the default widget style? This also clears any style blocks.")) e.preventDefault();
+                  if (!confirm("Reset to the default all-reviews page? This also clears any style blocks.")) e.preventDefault();
                 }}
               >
                 Reset to default
@@ -137,17 +133,17 @@ function TemplateForm({ state }) {
   );
 }
 
-export default function WidgetStyle() {
+export default function ReviewAllStyle() {
   const loaderData = useLoaderData();
 
   return (
-    <s-page heading="Widget style">
+    <s-page heading="All reviews page template">
       <TemplateForm state={loaderData} />
 
       <s-section heading="Preview">
         <s-paragraph>
-          Rendered with sample review data, including any styling saved from
-          the visual widget builder. Reflects the last <em>saved</em>{" "}
+          Rendered with sample reviews, including any styling saved from the
+          visual all-reviews builder. Reflects the last <em>saved</em>{" "}
           template, not unsaved edits above.
         </s-paragraph>
         {loaderData.previewError ? (
@@ -155,7 +151,7 @@ export default function WidgetStyle() {
         ) : (
           <div style={{ border: "1px solid #ddd", borderRadius: 8, padding: 16 }}>
             <style>{loaderData.previewCss}</style>
-            <div className="jm-reviews" dangerouslySetInnerHTML={{ __html: loaderData.previewHtml }} />
+            <div dangerouslySetInnerHTML={{ __html: loaderData.previewHtml }} />
           </div>
         )}
       </s-section>
