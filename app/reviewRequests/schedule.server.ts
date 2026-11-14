@@ -31,6 +31,15 @@ export async function createReviewRequestsForOrderTrigger(
     if (!item.productId || seenProducts.has(item.productId)) continue;
     seenProducts.add(item.productId);
 
+    // Skip if a request for this order+product already exists under any
+    // trigger — a merchant with both the "paid" and "fulfilled" rules
+    // enabled must not end up sending the customer two emails for the
+    // same product.
+    const existing = await db.reviewRequest.findFirst({
+      where: { orderId: order.id, productId: item.productId },
+    });
+    if (existing) continue;
+
     const reviewRequest = await db.reviewRequest.upsert({
       where: {
         orderId_productId_channel_triggerType: {

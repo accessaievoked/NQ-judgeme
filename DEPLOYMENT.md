@@ -89,7 +89,7 @@ fly secrets set \
   ENCRYPTION_KEY="<your base64 32-byte key>" \
   SHOPIFY_API_KEY="<from shopify.app.toml's client_id / Partner Dashboard>" \
   SHOPIFY_API_SECRET="<from Partner Dashboard > App setup > Client secret>" \
-  SCOPES="write_products,write_metaobjects,write_metaobject_definitions,read_orders,read_customers,write_files,read_discounts,write_discounts" \
+  SCOPES="write_products,read_orders,read_customers,write_files,read_discounts,write_discounts" \
   SHOPIFY_APP_URL="https://judgeme-demo-app.fly.dev" \
   REDIS_URL="redis://:$REDIS_PASSWORD@judgeme-demo-app-redis.internal:6379" \
   SMTP_HOST="<e.g. smtp.gmail.com>" \

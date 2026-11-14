@@ -10,7 +10,7 @@ export interface WebhookLedgerEntry {
 
 export type RecordWebhookEventResult =
   | { isDuplicate: false; eventId: string }
-  | { isDuplicate: true; eventId: null };
+  | { isDuplicate: true; eventId: string | null };
 
 /**
  * Inserts a row into the webhook idempotency ledger. The unique constraint
@@ -38,7 +38,18 @@ export async function recordWebhookEvent(
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2002"
     ) {
-      return { isDuplicate: true, eventId: null };
+      // The ledger insert lost the race (a retried delivery, or one that
+      // raced a duplicate webhookId). If the original attempt never made it
+      // onto the queue — Redis was briefly down — this delivery is the only
+      // chance to get it there, so hand the caller its id to re-queue.
+      // enqueueWebhookEvent's fixed jobId makes re-queuing an
+      // already-queued/processed event a safe no-op either way.
+      const existing = await db.webhookEvent.findUnique({
+        where: { webhookId: entry.webhookId },
+        select: { id: true, status: true },
+      });
+      const shouldRequeue = existing?.status === "RECEIVED" || existing?.status === "FAILED";
+      return { isDuplicate: true, eventId: shouldRequeue ? existing.id : null };
     }
     throw error;
   }

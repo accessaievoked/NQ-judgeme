@@ -1,0 +1,20 @@
+# fly.worker.toml — the BullMQ job worker (worker/index.ts, Dockerfile.worker),
+# its own small Fly app separate from the web process (fly.toml) and Redis
+# (fly.redis.toml) — see DEPLOYMENT.md. No HTTP service: the worker never
+# listens on a port, so there's no [http_service]/[[services]] block.
+# Deployed with `fly deploy --config fly.worker.toml`.
+#
+# `app` must be globally unique across all of Fly — rename before deploying.
+app = "nq-judgme-demo-worker"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile.worker"
+
+[env]
+  NODE_ENV = "production"
+
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1

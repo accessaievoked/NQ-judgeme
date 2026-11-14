@@ -14,6 +14,7 @@
 // through React Router as before.
 import { useEffect, useRef } from "react";
 import { useFetcher, useLoaderData } from "react-router";
+import { Prisma } from "@prisma/client";
 import db from "../db.server";
 import { cancelReviewReminder, enqueueReviewThankYou } from "../queue.server";
 import { invalidateReviewCache } from "../reviewWidget/reviewCache.server";
@@ -21,13 +22,24 @@ import { DEFAULT_REVIEW_FORM_HTML, renderReviewFormHtml } from "../reviewWidget/
 import { WRITE_FORM_DEFAULT_CSS as DEFAULT_REVIEW_FORM_CSS } from "../reviewWidget/sections/writeForm";
 import { compileReviewFormStyleBlocks } from "../reviewWidget/reviewFormStyleCompiler";
 
+// Review links stop working this long after they were scheduled to send,
+// whether or not they were ever submitted.
+const TOKEN_EXPIRY_MS = 90 * 24 * 60 * 60 * 1000;
+
+function isExpired(reviewRequest) {
+  return Boolean(
+    reviewRequest.scheduledAt &&
+      Date.now() - reviewRequest.scheduledAt.getTime() > TOKEN_EXPIRY_MS,
+  );
+}
+
 export const loader = async ({ params }) => {
   const reviewRequest = await db.reviewRequest.findUnique({
     where: { token: params.token },
     include: { product: true, shop: true, review: true },
   });
 
-  if (!reviewRequest) {
+  if (!reviewRequest || isExpired(reviewRequest)) {
     throw new Response("This review link is invalid or has expired.", { status: 404 });
   }
 
@@ -54,7 +66,7 @@ export const action = async ({ request, params }) => {
     include: { review: true, customer: true },
   });
 
-  if (!reviewRequest) {
+  if (!reviewRequest || isExpired(reviewRequest)) {
     throw new Response("This review link is invalid or has expired.", { status: 404 });
   }
   if (reviewRequest.review) {
@@ -84,19 +96,30 @@ export const action = async ({ request, params }) => {
   });
   const autoPublish = Boolean(settings?.autoPublishEnabled) && rating >= (settings?.autoPublishMinRating ?? 4);
 
-  const review = await db.review.create({
-    data: {
-      shopId: reviewRequest.shopId,
-      productId: reviewRequest.productId,
-      reviewRequestId: reviewRequest.id,
-      customerId: reviewRequest.customerId,
-      rating,
-      title,
-      body,
-      authorName,
-      status: autoPublish ? "PUBLISHED" : "PENDING",
-    },
-  });
+  let review;
+  try {
+    review = await db.review.create({
+      data: {
+        shopId: reviewRequest.shopId,
+        productId: reviewRequest.productId,
+        reviewRequestId: reviewRequest.id,
+        customerId: reviewRequest.customerId,
+        rating,
+        title,
+        body,
+        authorName,
+        status: autoPublish ? "PUBLISHED" : "PENDING",
+      },
+    });
+  } catch (error) {
+    // Two concurrent submits both pass the "already reviewed" check above;
+    // the loser hits the unique reviewRequestId constraint here instead of
+    // a 500 — same outcome as the early return for an already-reviewed link.
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      return { ok: true, alreadySubmitted: true };
+    }
+    throw error;
+  }
 
   if (autoPublish) await invalidateReviewCache(reviewRequest.shopId, reviewRequest.productId);
 

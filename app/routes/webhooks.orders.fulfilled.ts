@@ -7,14 +7,14 @@ import { enqueueWebhookEvent } from "../queue.server";
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { shop, topic, webhookId, payload } = await authenticate.webhook(request);
 
-  const { isDuplicate, eventId } = await recordWebhookEvent({
+  const { eventId } = await recordWebhookEvent({
     shopDomain: shop,
     topic,
     webhookId,
     payload,
   });
 
-  if (!isDuplicate && eventId) {
+  if (eventId) {
     await enqueueWebhookEvent({ webhookEventId: eventId });
   }
 

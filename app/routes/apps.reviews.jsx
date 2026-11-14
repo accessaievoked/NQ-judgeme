@@ -68,10 +68,9 @@ export const loader = async ({ request }) => {
   const url = new URL(request.url);
   const productId = url.searchParams.get("productId");
 
-  console.log("getting")
-  // Read the review limit and skip from the storefront request. 
-  const limit = Number(url.searchParams.get("limit")) || INLINE_REVIEW_LIMIT;
-  const skip = Number(url.searchParams.get("skip")) || 0;
+  // Read the review limit and skip from the storefront request.
+  const limit = Math.min(Math.max(1, Number(url.searchParams.get("limit")) || INLINE_REVIEW_LIMIT), 50);
+  const skip = Math.max(0, Number(url.searchParams.get("skip")) || 0);
 
   if (!productId) return Response.json({ error: "productId is required" }, { status: 400 });
 
@@ -83,11 +82,15 @@ export const loader = async ({ request }) => {
   });
   if (!product) return respond(await themeFor(shop.id), EMPTY_DATA);
 
-  const [theme, settings] = await Promise.all([
+  const [theme, settings, aggregate] = await Promise.all([
     themeFor(shop.id),
     db.shopSettings.findUnique({ where: { shopId: shop.id }, select: { allReviewsPageUrl: true } }),
+    db.review.aggregate({
+      where: { productId: product.id, status: "PUBLISHED" },
+      _count: { _all: true },
+      _avg: { rating: true },
+    }),
   ]);
-
 
   const reviews = await db.review.findMany({
     where: { productId: product.id, status: "PUBLISHED" },
@@ -106,13 +109,12 @@ export const loader = async ({ request }) => {
     },
   });
 
-  console.log("reviews length", reviews.length);
-
-  const average = reviews.length ? reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length : null;
-  const moreUrl = reviews.length > INLINE_REVIEW_LIMIT ? buildMoreUrl(settings?.allReviewsPageUrl, productId) : null;
+  const count = aggregate._count._all;
+  const average = aggregate._avg.rating;
+  const moreUrl = count > skip + reviews.length ? buildMoreUrl(settings?.allReviewsPageUrl, productId) : null;
 
   const payload = buildPayload(theme, {
-    count: reviews.length,
+    count,
     average,
     reviews: reviews.map((r) => ({ ...r, images: r.images.map((i) => i.url) })),
     moreUrl,
